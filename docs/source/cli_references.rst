@@ -12,8 +12,8 @@ subcommand. The synopsis for each command shows its parameters and their usage.
 - Choices are shown in curly braces.
 - User-supplied values are shown in angle brackets.
 
-This usage information is also available on the command line by using the -h or
---help option.
+This usage information is also available on the command line by using the ``-h``
+or ``--help`` option.
 
 .. toctree::
    :maxdepth: 2
