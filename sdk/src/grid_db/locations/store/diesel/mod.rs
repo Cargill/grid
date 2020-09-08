@@ -117,6 +117,74 @@ impl LocationStore for DieselLocationStore<diesel::pg::PgConnection> {
     }
 }
 
+#[cfg(feature = "sqlite")]
+impl LocationStore for DieselLocationStore<diesel::sqlite::SqliteConnection> {
+    fn add_location(
+        &self,
+        location: Location,
+        attributes: Vec<LocationAttribute>,
+        current_commit_num: i64,
+    ) -> Result<(), LocationStoreError> {
+        LocationStoreOperations::new(&*self.connection_pool.get().map_err(|err| {
+            DatabaseError::ConnectionError {
+                context: "Could not get connection pool".to_string(),
+                source: Box::new(err),
+            }
+        })?)
+        .add_location(
+            location.into(),
+            make_location_attribute_models(&attributes, None),
+            current_commit_num,
+        )
+    }
+
+    fn fetch_location(
+        &self,
+        location_id: &str,
+        service_id: Option<String>,
+    ) -> Result<Option<Location>, LocationStoreError> {
+        LocationStoreOperations::new(&*self.connection_pool.get().map_err(|err| {
+            DatabaseError::ConnectionError {
+                context: "Could not get connection pool".to_string(),
+                source: Box::new(err),
+            }
+        })?)
+        .fetch_location(location_id, service_id)
+    }
+
+    fn list_locations(
+        &self,
+        service_id: Option<String>,
+    ) -> Result<Vec<Location>, LocationStoreError> {
+        LocationStoreOperations::new(&*self.connection_pool.get().map_err(|err| {
+            DatabaseError::ConnectionError {
+                context: "Could not get connection pool".to_string(),
+                source: Box::new(err),
+            }
+        })?)
+        .list_locations(service_id)
+    }
+
+    fn update_location(
+        &self,
+        location: Location,
+        attributes: Vec<LocationAttribute>,
+        current_commit_num: i64,
+    ) -> Result<(), LocationStoreError> {
+        LocationStoreOperations::new(&*self.connection_pool.get().map_err(|err| {
+            DatabaseError::ConnectionError {
+                context: "Could not get connection pool".to_string(),
+                source: Box::new(err),
+            }
+        })?)
+        .update_location(
+            location.into(),
+            make_location_attribute_models(&attributes, None),
+            current_commit_num,
+        )
+    }
+}
+
 impl From<(i64, i64)> for LatLongValue {
     fn from((lat, long): (i64, i64)) -> Self {
         Self(lat, long)
