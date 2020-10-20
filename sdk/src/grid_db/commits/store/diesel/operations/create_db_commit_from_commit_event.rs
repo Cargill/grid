@@ -16,7 +16,7 @@ use std::convert::TryInto;
 
 use super::CommitStoreOperations;
 use crate::grid_db::commits::store::diesel::{
-    schema::commit, Commit, CommitEvent, CommitEventError,
+    schema::commits, Commit, CommitEvent, CommitEventError,
 };
 
 use diesel::{dsl::max, prelude::*};
@@ -44,8 +44,8 @@ impl<'a> CommitStoreCreateDbCommitFromCommitEventOperation
                     err
                 ))
             })?,
-            None => commit::table
-                .select(max(commit::commit_num))
+            None => commits::table
+                .select(max(commits::commit_num))
                 .first(self.conn)
                 .map(|option: Option<i64>| match option {
                     Some(num) => num + 1,
@@ -81,8 +81,8 @@ impl<'a> CommitStoreCreateDbCommitFromCommitEventOperation
                     err
                 ))
             })?,
-            None => commit::table
-                .select(max(commit::commit_num))
+            None => commits::table
+                .select(max(commits::commit_num))
                 .first(self.conn)
                 .map(|option: Option<i64>| match option {
                     Some(num) => num + 1,

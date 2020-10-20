@@ -96,16 +96,14 @@ impl DbExecutor {
     }
 }
 
-#[cfg(all(feature = "test-api", test))]
+#[cfg(test)]
 mod test {
     use super::*;
     use crate::config::Endpoint;
     use crate::database;
-    use crate::rest_api::{
-        error::RestApiResponseError,
-        routes::{AgentSlice, OrganizationSlice},
-        AppState,
-    };
+    #[cfg(feature = "test-pike")]
+    use crate::rest_api::routes::{AgentSlice, OrganizationSlice};
+    use crate::rest_api::{error::RestApiResponseError, AppState};
     use crate::sawtooth::batch_submitter::{
         process_batch_status_response, process_validator_response, query_validator,
     };
@@ -116,26 +114,57 @@ mod test {
         test::{start, TestServer},
         web, App,
     };
-    use diesel::{Connection, PgConnection};
+    #[cfg(any(
+        feature = "test-pike",
+        feature = "test-tnt",
+        feature = "test-product",
+        feature = "test-location",
+        feature = "test-schema"
+    ))]
+    use diesel::{Connection, SqliteConnection};
     use futures::prelude::*;
-    use sawtooth_sdk::messages::batch::{Batch, BatchList};
-    use sawtooth_sdk::messages::client_batch_submit::{
-        ClientBatchStatus, ClientBatchStatusRequest, ClientBatchStatusResponse,
-        ClientBatchStatusResponse_Status, ClientBatchStatus_Status, ClientBatchSubmitRequest,
-        ClientBatchSubmitResponse, ClientBatchSubmitResponse_Status,
+    #[cfg(any(feature = "test-pike", feature = "test-tnt"))]
+    use grid_sdk::grid_db::agents::store::Agent;
+    #[cfg(feature = "test-location")]
+    use grid_sdk::grid_db::locations::store::{
+        diesel::DieselLocationStore, Location, LocationAttribute,
     };
-
+    #[cfg(any(
+        feature = "test-pike",
+        feature = "test-tnt",
+        feature = "test-product",
+        feature = "test-location",
+        feature = "test-schema"
+    ))]
+    use grid_sdk::grid_db::migrations::run_sqlite_migrations;
+    #[cfg(feature = "test-product")]
+    use grid_sdk::grid_db::products::store::{diesel::DieselProductStore, Product, PropertyValue};
+    #[cfg(feature = "test-schema")]
+    use grid_sdk::grid_db::schemas::store::{
+        diesel::DieselSchemaStore, PropertyDefinition, Schema,
+    };
+    #[cfg(feature = "test-pike")]
     use grid_sdk::grid_db::{
-        agents::store::{diesel::DieselAgentStore, Agent},
-        locations::store::{diesel::DieselLocationStore, Location, LocationAttribute},
-        migrations::{clear_postgres_database, run_postgres_migrations},
+        agents::store::diesel::DieselAgentStore,
         organizations::store::{diesel::DieselOrganizationStore, Organization},
-        products::store::{diesel::DieselProductStore, Product, PropertyValue},
-        schemas::store::{diesel::DieselSchemaStore, PropertyDefinition, Schema},
+    };
+    #[cfg(feature = "test-tnt")]
+    use grid_sdk::grid_db::{
+        schemas::store::{PropertyDefinition, Schema},
         track_and_trace::store::{
             diesel::DieselTrackAndTraceStore, AssociatedAgent, LatLongValue, Property, Proposal,
             Record, ReportedValue, Reporter,
         },
+    };
+    use sawtooth_sdk::messages::batch::Batch;
+    #[cfg(feature = "test-batches")]
+    use sawtooth_sdk::messages::batch::BatchList;
+    #[cfg(feature = "test-batches")]
+    use sawtooth_sdk::messages::client_batch_submit::ClientBatchSubmitResponse_Status;
+    use sawtooth_sdk::messages::client_batch_submit::{
+        ClientBatchStatus, ClientBatchStatusRequest, ClientBatchStatusResponse,
+        ClientBatchStatusResponse_Status, ClientBatchStatus_Status, ClientBatchSubmitRequest,
+        ClientBatchSubmitResponse,
     };
     use sawtooth_sdk::messages::validator::{Message, Message_MessageType};
 
@@ -143,27 +172,47 @@ mod test {
     use std::pin::Pin;
     use std::sync::mpsc::channel;
 
-    static DATABASE_URL: &str = "postgres://grid_test:grid_test@test_server:5432/grid_test";
-
+    #[cfg(any(feature = "test-pike", feature = "test-tnt"))]
     static KEY1: &str = "111111111111111111111111111111111111111111111111111111111111111111";
+    #[cfg(any(feature = "test-pike", feature = "test-tnt"))]
     static KEY2: &str = "222222222222222222222222222222222222222222222222222222222222222222";
+    #[cfg(any(feature = "test-pike", feature = "test-tnt"))]
     static KEY3: &str = "333333333333333333333333333333333333333333333333333333333333333333";
 
+    #[cfg(feature = "test-pike")]
     static ORG_NAME_1: &str = "my_org";
+    #[cfg(feature = "test-pike")]
     static ORG_NAME_2: &str = "other_org";
 
+    #[cfg(feature = "test-pike")]
     static ADDRESS_1: &str = "my_address";
+    #[cfg(feature = "test-pike")]
     static ADDRESS_2: &str = "my_address_2";
+    #[cfg(feature = "test-pike")]
     static UPDATED_ADDRESS_2: &str = "my_updated_address";
 
     static BATCH_ID_1: &str = "batch_1";
     static BATCH_ID_2: &str = "batch_2";
     static BATCH_ID_3: &str = "batch_3";
 
+    #[cfg(any(
+        feature = "test-pike",
+        feature = "test-tnt",
+        feature = "test-product",
+        feature = "test-location",
+        feature = "test-schema"
+    ))]
     static TEST_SERVICE_ID: &str = "test_service";
 
     #[derive(Clone)]
     enum Backend {
+        #[cfg(any(
+            feature = "test-pike",
+            feature = "test-tnt",
+            feature = "test-product",
+            feature = "test-location",
+            feature = "test-schema"
+        ))]
         Splinter,
         Sawtooth,
     }
@@ -175,10 +224,15 @@ mod test {
     #[derive(Clone, Copy, Debug)]
     enum ResponseType {
         ClientBatchStatusResponseOK,
+        #[cfg(feature = "test-batches")]
         ClientBatchStatusResponseInvalidId,
+        #[cfg(feature = "test-batches")]
         ClientBatchStatusResponseInternalError,
+        #[cfg(feature = "test-batches")]
         ClientBatchSubmitResponseOK,
+        #[cfg(feature = "test-batches")]
         ClientBatchSubmitResponseInvalidBatch,
+        #[cfg(feature = "test-batches")]
         ClientBatchSubmitResponseInternalError,
     }
 
@@ -294,18 +348,23 @@ mod test {
                             .set_content(get_batch_statuses_response_multiple_ids())
                     }
                 }
+                #[cfg(feature = "test-batches")]
                 ResponseType::ClientBatchStatusResponseInvalidId => {
                     mock_validator_response.set_content(get_batch_statuses_response_invalid_id())
                 }
+                #[cfg(feature = "test-batches")]
                 ResponseType::ClientBatchStatusResponseInternalError => mock_validator_response
                     .set_content(get_batch_statuses_response_validator_internal_error()),
+                #[cfg(feature = "test-batches")]
                 ResponseType::ClientBatchSubmitResponseOK => mock_validator_response.set_content(
                     get_submit_batches_response(ClientBatchSubmitResponse_Status::OK),
                 ),
+                #[cfg(feature = "test-batches")]
                 ResponseType::ClientBatchSubmitResponseInvalidBatch => mock_validator_response
                     .set_content(get_submit_batches_response(
                         ClientBatchSubmitResponse_Status::INVALID_BATCH,
                     )),
+                #[cfg(feature = "test-batches")]
                 ResponseType::ClientBatchSubmitResponseInternalError => mock_validator_response
                     .set_content(get_submit_batches_response(
                         ClientBatchSubmitResponse_Status::INTERNAL_ERROR,
@@ -332,21 +391,32 @@ mod test {
         }
     }
 
-    fn get_connection_pool() -> ConnectionPool<diesel::pg::PgConnection> {
-        database::ConnectionPool::new(&DATABASE_URL).expect("Unable to unwrap connection pool")
+    fn get_connection_pool(db_name: &str) -> ConnectionPool<diesel::sqlite::SqliteConnection> {
+        database::ConnectionPool::new(db_name).expect("Unable to unwrap connection pool")
     }
 
-    fn create_test_server(backend: Backend, response_type: ResponseType) -> TestServer {
+    fn create_test_server(
+        backend: Backend,
+        response_type: ResponseType,
+        db_name: &'static str,
+    ) -> TestServer {
         start(move || {
             let state = {
                 let mock_sender = MockMessageSender::new(response_type);
                 let mock_batch_submitter = Box::new(MockBatchSubmitter {
                     sender: mock_sender,
                 });
-                let db_executor = DbExecutor::from_pg_pool(get_connection_pool());
+                let db_executor = DbExecutor::from_sqlite_pool(get_connection_pool(db_name));
                 AppState::new(mock_batch_submitter, db_executor)
             };
             let endpoint_backend = match backend {
+                #[cfg(any(
+                    feature = "test-pike",
+                    feature = "test-tnt",
+                    feature = "test-product",
+                    feature = "test-location",
+                    feature = "test-schema"
+                ))]
                 Backend::Splinter => "splinter:",
                 Backend::Sawtooth => "sawtooth:",
             };
@@ -413,8 +483,13 @@ mod test {
     ///        - a data property matching the batch statuses received
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-batches")]
     async fn test_get_batch_status_one_id() {
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_get_batch_status_one_id",
+        );
 
         let mut response = srv
             .request(
@@ -454,8 +529,13 @@ mod test {
     ///        - a data property matching the batch statuses received
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-batches")]
     async fn test_get_batch_status_multiple_ids() {
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_get_batch_status_multiple_ids",
+        );
 
         let mut response = srv
             .request(
@@ -502,10 +582,12 @@ mod test {
     ///        - with an error message explaining the error
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-batches")]
     async fn test_get_batch_status_invalid_id() {
         let srv = create_test_server(
             Backend::Sawtooth,
             ResponseType::ClientBatchStatusResponseInvalidId,
+            "test_get_batch_status_invalid_id",
         );
 
         let response = srv
@@ -529,10 +611,12 @@ mod test {
     ///    It should send back a response with status InternalError
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-batches")]
     async fn test_get_batch_status_internal_error() {
         let srv = create_test_server(
             Backend::Sawtooth,
             ResponseType::ClientBatchStatusResponseInternalError,
+            "test_get_batch_status_internal_error",
         );
 
         let response = srv
@@ -557,8 +641,13 @@ mod test {
     ///    It should send back a response with status BadRequest
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-batches")]
     async fn test_get_batch_status_wait_error() {
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_get_batch_status_wait_error",
+        );
 
         let response = srv
             .request(
@@ -585,8 +674,13 @@ mod test {
     ///        - a link property that ends in '/batch_statuses?id=BATCH_ID_1'
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-batches")]
     async fn test_post_batches_ok() {
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchSubmitResponseOK);
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchSubmitResponseOK,
+            "test_post_batches_ok",
+        );
 
         let mut response = srv
             .request(http::Method::POST, srv.url("/batches"))
@@ -613,10 +707,12 @@ mod test {
     ///    It should send back a response with BadRequest status
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-batches")]
     async fn test_post_batches_invalid_batch() {
         let srv = create_test_server(
             Backend::Sawtooth,
             ResponseType::ClientBatchSubmitResponseInvalidBatch,
+            "test_post_batches_invalid_batch",
         );
 
         let response = srv
@@ -637,10 +733,12 @@ mod test {
     ///    It should send back a response with InternalError status
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-batches")]
     async fn test_post_batches_internal_error() {
         let srv = create_test_server(
             Backend::Sawtooth,
             ResponseType::ClientBatchSubmitResponseInternalError,
+            "test_post_batches_internal_error",
         );
 
         let response = srv
@@ -661,17 +759,21 @@ mod test {
     ///     It should send back a response with:
     ///         - body containing a list of Agents
     #[actix_rt::test]
+    #[cfg(feature = "test-pike")]
     async fn test_list_agents() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
-        // Clears the agents table in the test database
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_list_agents");
+        let test_pool = get_connection_pool("test_list_agents");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_list_agents",
+        );
         let mut response = srv
             .request(http::Method::GET, srv.url("/agent"))
             .send()
             .await
             .unwrap();
+
         assert!(response.status().is_success());
         let body: Vec<AgentSlice> =
             serde_json::from_slice(&*response.body().await.unwrap()).unwrap();
@@ -705,12 +807,15 @@ mod test {
     ///     It should send back a response with:
     ///         - body containing a list of Agents
     #[actix_rt::test]
+    #[cfg(feature = "test-pike")]
     async fn test_list_agents_with_service_id() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Splinter, ResponseType::ClientBatchStatusResponseOK);
-        // Clears the agents table in the test database
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_list_agents_with_service_id");
+        let test_pool = get_connection_pool("test_list_agents_with_service_id");
+        let srv = create_test_server(
+            Backend::Splinter,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_list_agents_with_service_id",
+        );
         let mut response = srv
             .request(
                 http::Method::GET,
@@ -752,12 +857,14 @@ mod test {
     /////     with an empty organization table
     /////
     #[actix_rt::test]
+    #[cfg(feature = "test-pike")]
     async fn test_list_organizations_empty() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
-        // Clears the organization table in the test database
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_list_organizations_empty");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_list_organizations_empty",
+        );
         let mut response = srv
             .request(http::Method::GET, srv.url("/organization"))
             .send()
@@ -774,13 +881,17 @@ mod test {
     ///     with a list containing one organization
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-pike")]
     async fn test_list_organizations() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
+        run_migrations("test_list_organizations");
+        let test_pool = get_connection_pool("test_list_organizations");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_list_organizations",
+        );
 
         // Adds an organization to the test database
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
         populate_organization_table(test_pool, get_organization(None));
 
         // Making another request to the database
@@ -804,13 +915,17 @@ mod test {
     ///     with a list containing one organization with a matching service_id
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-pike")]
     async fn test_list_organizations_with_service_id() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Splinter, ResponseType::ClientBatchStatusResponseOK);
+        run_migrations("test_list_organizations_with_service_id");
+        let test_pool = get_connection_pool("test_list_organizations_with_service_id");
+        let srv = create_test_server(
+            Backend::Splinter,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_list_organizations_with_service_id",
+        );
 
         // Adds an organization to the test database
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
         populate_organization_table(
             test_pool,
             get_organization(Some(TEST_SERVICE_ID.to_string())),
@@ -844,13 +959,17 @@ mod test {
     /// (end_commit_num == MAX_COMMIT_NUM)
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-pike")]
     async fn test_list_organizations_updated() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
+        run_migrations("test_list_organizations_updated");
+        let test_pool = get_connection_pool("test_list_organizations_updated");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_list_organizations_updated",
+        );
 
         // Adds two instances of organization with the same org_id to the test database
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
         populate_organization_table(test_pool, get_updated_organization());
 
         // Making another request to the database
@@ -875,12 +994,14 @@ mod test {
     /// when there is no organization with the specified id.
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-pike")]
     async fn test_fetch_organization_not_found() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
-        // Clears the organization table in the test database
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_fetch_organization_not_found");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_organization_not_found",
+        );
         let response = srv
             .request(http::Method::GET, srv.url("/organization/not_a_valid_id"))
             .send()
@@ -894,12 +1015,16 @@ mod test {
     /// when there is no organization with the specified id and service_id.
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-pike")]
     async fn test_fetch_organization_with_service_id_not_found() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Splinter, ResponseType::ClientBatchStatusResponseOK);
+        run_migrations("test_fetch_organization_with_service_id_not_found");
+        let test_pool = get_connection_pool("test_fetch_organization_with_service_id_not_found");
+        let srv = create_test_server(
+            Backend::Splinter,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_organization_with_service_id_not_found",
+        );
         //Adds an organization to the test database
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
         populate_organization_table(test_pool, get_organization(None));
         let response = srv
             .request(
@@ -920,13 +1045,17 @@ mod test {
     /// when there is an organization with the specified id.
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-pike")]
     async fn test_fetch_organization_ok() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
+        run_migrations("test_fetch_organization_ok");
+        let test_pool = get_connection_pool("test_fetch_organization_ok");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_organization_ok",
+        );
 
         // Adds an organization to the test database
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
         populate_organization_table(test_pool, get_organization(None));
 
         // Making another request to the database
@@ -954,13 +1083,17 @@ mod test {
     /// (end_commit_num == MAX_COMMIT_NUM)
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-pike")]
     async fn test_fetch_organization_updated_ok() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
+        run_migrations("test_fetch_organization_updated_ok");
+        let test_pool = get_connection_pool("test_fetch_organization_updated_ok");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_organization_updated_ok",
+        );
 
         // Adds an organization to the test database
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
         populate_organization_table(test_pool, get_updated_organization());
 
         // Making another request to the database
@@ -986,13 +1119,17 @@ mod test {
     /// when there is an organization with the specified id and matching service_id.
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-pike")]
     async fn test_fetch_organization_with_service_id_ok() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Splinter, ResponseType::ClientBatchStatusResponseOK);
+        run_migrations("test_fetch_organization_with_service_id_ok");
+        let test_pool = get_connection_pool("test_fetch_organization_with_service_id_ok");
+        let srv = create_test_server(
+            Backend::Splinter,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_organization_with_service_id_ok",
+        );
 
         // Adds an organization to the test database
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
         populate_organization_table(
             test_pool,
             get_organization(Some(TEST_SERVICE_ID.to_string())),
@@ -1024,13 +1161,17 @@ mod test {
     ///     with an Agent with the specified public key.
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-pike")]
     async fn test_fetch_agent_ok() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
+        run_migrations("test_fetch_agent_ok");
+        let test_pool = get_connection_pool("test_fetch_agent_ok");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_agent_ok",
+        );
 
         //Adds an agent to the test database
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
         populate_agent_table(test_pool, get_agent(None));
 
         let mut response = srv
@@ -1050,13 +1191,17 @@ mod test {
     ///     with an Agent with the specified public key and service_id.
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-pike")]
     async fn test_fetch_agent_with_service_id_ok() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Splinter, ResponseType::ClientBatchStatusResponseOK);
+        run_migrations("test_fetch_agent_with_service_id_ok");
+        let test_pool = get_connection_pool("test_fetch_agent_with_service_id_ok");
+        let srv = create_test_server(
+            Backend::Splinter,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_agent_with_service_id_ok",
+        );
 
         //Adds an agent to the test database
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
         populate_agent_table(test_pool, get_agent(Some(TEST_SERVICE_ID.to_string())));
 
         let mut response = srv
@@ -1080,12 +1225,14 @@ mod test {
     ///     when the public key is not assigned to any Agent.
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-pike")]
     async fn test_fetch_agent_not_found() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
-        // Clear the agents table in the test database
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_fetch_agent_not_found");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_agent_not_found",
+        );
         let response = srv
             .request(http::Method::GET, srv.url("/agent/unknown_public_key"))
             .send()
@@ -1099,12 +1246,16 @@ mod test {
     ///     when the public key is not assigned to any Agent with the service_id.
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-pike")]
     async fn test_fetch_agent_with_service_id_not_found() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Splinter, ResponseType::ClientBatchStatusResponseOK);
+        run_migrations("test_fetch_agent_with_service_id_not_found");
+        let test_pool = get_connection_pool("test_fetch_agent_with_service_id_not_found");
+        let srv = create_test_server(
+            Backend::Splinter,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_agent_with_service_id_not_found",
+        );
         //Adds an agent to the test database
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
         populate_agent_table(test_pool, get_agent(None));
 
         let response = srv
@@ -1127,12 +1278,16 @@ mod test {
     ///     The TestServer will receive a request with no parameters,
     ///         then will respond with an Ok status and a list of Grid Schemas.
     #[actix_rt::test]
+    #[cfg(feature = "test-schema")]
     async fn test_list_schemas() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
+        run_migrations("test_list_schemas");
+        let test_pool = get_connection_pool("test_list_schemas");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_list_schemas",
+        );
         // Clears the grid schema table in the test database
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
         let mut response = srv
             .request(http::Method::GET, srv.url("/schema"))
             .send()
@@ -1166,12 +1321,15 @@ mod test {
     ///     The TestServer will receive a request with the service ID,
     ///         then will respond with an Ok status and a list of Grid Schemas.
     #[actix_rt::test]
+    #[cfg(feature = "test-schema")]
     async fn test_list_schemas_with_service_id() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Splinter, ResponseType::ClientBatchStatusResponseOK);
-        // Clears the grid schema table in the test database
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_list_schemas_with_service_id");
+        let test_pool = get_connection_pool("test_list_schemas_with_service_id");
+        let srv = create_test_server(
+            Backend::Splinter,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_list_schemas_with_service_id",
+        );
         let mut response = srv
             .request(
                 http::Method::GET,
@@ -1214,11 +1372,15 @@ mod test {
     ///     and the Grid Schema with the specified name
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-schema")]
     async fn test_fetch_schema_ok() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_fetch_schema_ok");
+        let test_pool = get_connection_pool("test_fetch_schema_ok");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_schema_ok",
+        );
         populate_grid_schema_table(test_pool, get_grid_schema(None));
         let mut response = srv
             .request(
@@ -1241,11 +1403,15 @@ mod test {
     ///     and the Grid Schema with the specified name and service_id.
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-schema")]
     async fn test_fetch_schema_with_service_id_ok() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Splinter, ResponseType::ClientBatchStatusResponseOK);
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_fetch_schema_with_service_id_ok");
+        let test_pool = get_connection_pool("test_fetch_schema_with_service_id_ok");
+        let srv = create_test_server(
+            Backend::Splinter,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_schema_with_service_id_ok",
+        );
         populate_grid_schema_table(
             test_pool,
             get_grid_schema(Some(TEST_SERVICE_ID.to_string())),
@@ -1275,11 +1441,14 @@ mod test {
     ///     when there is no Grid Schema with the specified name
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-schema")]
     async fn test_fetch_schema_not_found() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_fetch_schema_not_found");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_schema_not_found",
+        );
         let response = srv
             .request(http::Method::GET, srv.url("/schema/not_in_database"))
             .send()
@@ -1293,11 +1462,15 @@ mod test {
     ///     when there is no Grid Schema with the specified name and service id.
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-schema")]
     async fn test_fetch_schema_with_service_id_not_found() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Splinter, ResponseType::ClientBatchStatusResponseOK);
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_fetch_schema_with_service_id_not_found");
+        let test_pool = get_connection_pool("test_fetch_schema_with_service_id_not_found");
+        let srv = create_test_server(
+            Backend::Splinter,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_schema_with_service_id_not_found",
+        );
         populate_grid_schema_table(test_pool, get_grid_schema(None));
         let response = srv
             .request(
@@ -1319,12 +1492,15 @@ mod test {
     ///     The TestServer will receive a request with no parameters,
     ///         then will respond with an Ok status and a list of Products.
     #[actix_rt::test]
+    #[cfg(feature = "test-product")]
     async fn test_list_products() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
-        // Clears the product table in the test database
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_list_products");
+        let test_pool = get_connection_pool("test_list_products");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_list_products",
+        );
         let mut response = srv
             .request(http::Method::GET, srv.url("/product"))
             .send()
@@ -1360,12 +1536,15 @@ mod test {
     ///     The TestServer will receive a request with no parameters,
     ///         then will respond with an Ok status and a list of Locations.
     #[actix_rt::test]
+    #[cfg(feature = "test-location")]
     async fn test_list_locations() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
-
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_list_locations");
+        let test_pool = get_connection_pool("test_list_locations");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_list_locations",
+        );
 
         let mut response = srv
             .request(http::Method::GET, srv.url("location"))
@@ -1404,12 +1583,15 @@ mod test {
     ///     The TestServer will receive a request with a service_id,
     ///         then will respond with an Ok status and a list of Products.
     #[actix_rt::test]
+    #[cfg(feature = "test-product")]
     async fn test_list_products_with_service_id() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Splinter, ResponseType::ClientBatchStatusResponseOK);
-        // Clears the product table in the test database
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_list_products_with_service_id");
+        let test_pool = get_connection_pool("test_list_products_with_service_id");
+        let srv = create_test_server(
+            Backend::Splinter,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_list_products_with_service_id",
+        );
         let mut response = srv
             .request(
                 http::Method::GET,
@@ -1452,12 +1634,16 @@ mod test {
     ///     The TestServer will receive a request with a service_id,
     ///         then will respond with an Ok status and a list of Products.
     #[actix_rt::test]
+    #[cfg(feature = "test-location")]
     async fn test_list_locations_with_service_id() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Splinter, ResponseType::ClientBatchStatusResponseOK);
+        run_migrations("test_list_locations_with_service_id");
+        let test_pool = get_connection_pool("test_list_locations_with_service_id");
+        let srv = create_test_server(
+            Backend::Splinter,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_list_locations_with_service_id",
+        );
         // Clears the location table in the test database
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
         let mut response = srv
             .request(
                 http::Method::GET,
@@ -1501,11 +1687,15 @@ mod test {
     ///     and the Product with the specified id
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-product")]
     async fn test_fetch_product_ok() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_fetch_product_ok");
+        let test_pool = get_connection_pool("test_fetch_product_ok");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_product_ok",
+        );
         populate_product_table(test_pool, get_product(None));
         let mut response = srv
             .request(
@@ -1530,12 +1720,15 @@ mod test {
     ///     and the Location with the specified id
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-location")]
     async fn test_fetch_location_ok() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
-
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_fetch_location_ok");
+        let test_pool = get_connection_pool("test_fetch_location_ok");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_location_ok",
+        );
 
         populate_location_table(test_pool, get_location(None));
 
@@ -1564,11 +1757,15 @@ mod test {
     ///     and the Product with the specified id and service id.
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-product")]
     async fn test_fetch_product_with_service_id_ok() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Splinter, ResponseType::ClientBatchStatusResponseOK);
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_fetch_product_with_service_id_ok");
+        let test_pool = get_connection_pool("test_fetch_product_with_service_id_ok");
+        let srv = create_test_server(
+            Backend::Splinter,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_product_with_service_id_ok",
+        );
         populate_product_table(test_pool, get_product(Some(TEST_SERVICE_ID.to_string())));
         let mut response = srv
             .request(
@@ -1597,12 +1794,15 @@ mod test {
     ///     and the Location with the specified id and service id.
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-location")]
     async fn test_fetch_location_with_service_id_ok() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Splinter, ResponseType::ClientBatchStatusResponseOK);
-
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_fetch_location_with_service_id_ok");
+        let test_pool = get_connection_pool("test_fetch_location_with_service_id_ok");
+        let srv = create_test_server(
+            Backend::Splinter,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_location_with_service_id_ok",
+        );
 
         populate_location_table(test_pool, get_location(Some(TEST_SERVICE_ID.to_string())));
         let mut response = srv
@@ -1634,11 +1834,14 @@ mod test {
     ///     when there is no Product with the specified id
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-product")]
     async fn test_fetch_product_not_found() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_fetch_product_not_found");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_product_not_found",
+        );
         let response = srv
             .request(http::Method::GET, srv.url("/product/not_in_database"))
             .send()
@@ -1652,11 +1855,15 @@ mod test {
     ///     when there is no Product with the specified id
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-location")]
     async fn test_fetch_location_not_found() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_fetch_location_not_found");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_location_not_found",
+        );
+
         let response = srv
             .request(http::Method::GET, srv.url("/location/not_in_database"))
             .send()
@@ -1670,11 +1877,15 @@ mod test {
     ///     when there is no Product with the specified id and service id.
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-product")]
     async fn test_fetch_product_with_service_id_not_found() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Splinter, ResponseType::ClientBatchStatusResponseOK);
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_fetch_product_with_service_id_not_found");
+        let test_pool = get_connection_pool("test_fetch_product_with_service_id_not_found");
+        let srv = create_test_server(
+            Backend::Splinter,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_product_with_service_id_not_found",
+        );
         populate_product_table(test_pool, get_product(None));
         let response = srv
             .request(
@@ -1695,11 +1906,15 @@ mod test {
     ///     when there is no Product with the specified id and service id.
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-location")]
     async fn test_fetch_location_with_service_id_not_found() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Splinter, ResponseType::ClientBatchStatusResponseOK);
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_fetch_location_with_service_id_not_found");
+        let test_pool = get_connection_pool("test_fetch_location_with_service_id_not_found");
+        let srv = create_test_server(
+            Backend::Splinter,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_location_with_service_id_not_found",
+        );
         populate_location_table(test_pool, get_location(None));
         let response = srv
             .request(
@@ -1720,12 +1935,15 @@ mod test {
     ///     with a list containing one record
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-tnt")]
     async fn test_list_records() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
-
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_list_records");
+        let test_pool = get_connection_pool("test_list_records");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_list_records",
+        );
 
         populate_agent_table(test_pool.clone(), get_agents_with_roles(None));
         populate_associated_agent_table(test_pool.clone(), get_associated_agents(None));
@@ -1850,12 +2068,15 @@ mod test {
     ///     with a list containing one record with the correct service id.
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-tnt")]
     async fn test_list_records_with_service_id() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Splinter, ResponseType::ClientBatchStatusResponseOK);
-
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_list_records_with_service_id");
+        let test_pool = get_connection_pool("test_list_records_with_service_id");
+        let srv = create_test_server(
+            Backend::Splinter,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_list_records_with_service_id",
+        );
 
         populate_agent_table(
             test_pool.clone(),
@@ -2035,12 +2256,16 @@ mod test {
     /// (end_commit_num == MAX_COMMIT_NUM)
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-tnt")]
     async fn test_list_records_updated() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
+        run_migrations("test_list_records_updated");
+        let test_pool = get_connection_pool("test_list_records_updated");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_list_records_updated",
+        );
 
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
         // Adds two instances of record with the same org_id to the test database
         populate_record_table(test_pool, get_updated_record());
 
@@ -2066,12 +2291,16 @@ mod test {
     /// record_ids, one of which has been updated.
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-tnt")]
     async fn test_list_records_multiple() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
+        run_migrations("test_list_records_multiple");
+        let test_pool = get_connection_pool("test_list_records_multiple");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_list_records_multiple",
+        );
 
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
         // Adds two instances of record with the same org_id to the test database
         populate_record_table(test_pool.clone(), get_multiple_records());
         populate_tnt_property_table(
@@ -2104,11 +2333,15 @@ mod test {
     ///     and the Record with the specified record ID.
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-tnt")]
     async fn test_fetch_record_ok() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_fetch_record_ok");
+        let test_pool = get_connection_pool("test_fetch_record_ok");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_record_ok",
+        );
 
         populate_agent_table(test_pool.clone(), get_agents_with_roles(None));
         populate_associated_agent_table(test_pool.clone(), get_associated_agents(None));
@@ -2235,12 +2468,15 @@ mod test {
     ///     and the Record with the specified record ID.
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-tnt")]
     async fn test_fetch_record_with_service_id_ok() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Splinter, ResponseType::ClientBatchStatusResponseOK);
-
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_fetch_record_with_service_id_ok");
+        let test_pool = get_connection_pool("test_fetch_record_with_service_id_ok");
+        let srv = create_test_server(
+            Backend::Splinter,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_record_with_service_id_ok",
+        );
 
         populate_agent_table(
             test_pool.clone(),
@@ -2409,12 +2645,15 @@ mod test {
     ///     owners, custodians, and proposals have been updated.
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-tnt")]
     async fn test_fetch_record_updated_ok() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
-
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_fetch_record_updated_ok");
+        let test_pool = get_connection_pool("test_fetch_record_updated_ok");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_record_updated_ok",
+        );
 
         populate_grid_schema_table(test_pool.clone(), get_grid_schema_for_record(None));
         populate_record_table(test_pool.clone(), get_updated_record());
@@ -2540,11 +2779,14 @@ mod test {
     ///     when there is no Record with the specified record_id.
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-tnt")]
     async fn test_fetch_record_not_found() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_fetch_record_not_found");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_record_not_found",
+        );
         let response = srv
             .request(http::Method::GET, srv.url("/record/not_in_database"))
             .send()
@@ -2558,12 +2800,14 @@ mod test {
     ///     when there is no Record with the specified record_id.
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-tnt")]
     async fn test_fetch_record_with_service_id_not_found() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Splinter, ResponseType::ClientBatchStatusResponseOK);
-
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_fetch_record_with_service_id_not_found");
+        let srv = create_test_server(
+            Backend::Splinter,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_record_with_service_id_not_found",
+        );
 
         let response = srv
             .request(
@@ -2584,12 +2828,15 @@ mod test {
     ///     and the infomation on the Property requested
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-tnt")]
     async fn test_fetch_record_property_ok() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
-
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_fetch_record_property_ok");
+        let test_pool = get_connection_pool("test_fetch_record_property_ok");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_record_property_ok",
+        );
 
         populate_grid_schema_table(test_pool.clone(), get_grid_schema_for_struct_record(None));
         populate_record_table(test_pool.clone(), get_record("record_01", None));
@@ -2672,12 +2919,15 @@ mod test {
     ///     with an OK response and the infomation on the Property requested.
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-tnt")]
     async fn test_fetch_record_property_with_service_id_ok() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Splinter, ResponseType::ClientBatchStatusResponseOK);
-
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_fetch_record_property_with_service_id_ok");
+        let test_pool = get_connection_pool("test_fetch_record_property_with_service_id_ok");
+        let srv = create_test_server(
+            Backend::Splinter,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_record_property_with_service_id_ok",
+        );
 
         populate_grid_schema_table(
             test_pool.clone(),
@@ -2769,6 +3019,7 @@ mod test {
         validate_current_value(second_update, Some(TEST_SERVICE_ID.to_string()));
     }
 
+    #[cfg(feature = "test-tnt")]
     fn validate_current_value(property_value: &PropertyValueSlice, service_id: Option<String>) {
         validate_reporter(&property_value.reporter, KEY1, service_id.clone());
         assert_eq!(property_value.timestamp, 5);
@@ -2801,11 +3052,13 @@ mod test {
         }
     }
 
+    #[cfg(feature = "test-tnt")]
     fn validate_reporter(reporter: &ReporterSlice, public_key: &str, service_id: Option<String>) {
         assert_eq!(reporter.public_key, public_key.to_string());
         assert_eq!(reporter.service_id, service_id);
     }
 
+    #[cfg(feature = "test-tnt")]
     fn validate_struct_value(
         struct_value: &StructPropertyValue,
         expected_string_value: &str,
@@ -2825,6 +3078,7 @@ mod test {
         }
     }
 
+    #[cfg(feature = "test-tnt")]
     fn validate_string_value(string_value: &StructPropertyValue, expected_value: &str) {
         assert_eq!(string_value.data_type, "String".to_string());
         assert!(string_value.name.contains("StringProperty"));
@@ -2834,24 +3088,28 @@ mod test {
         );
     }
 
+    #[cfg(feature = "test-tnt")]
     fn validate_boolean_value(boolean_value: &StructPropertyValue, expected_value: bool) {
         assert_eq!(boolean_value.data_type, "Boolean".to_string());
         assert!(boolean_value.name.contains("BoolProperty"));
         assert_eq!(boolean_value.value, Value::Bool(expected_value));
     }
 
+    #[cfg(feature = "test-tnt")]
     fn validate_location_value(location_value: &StructPropertyValue, expected_value: LatLong) {
         assert_eq!(location_value.data_type, "LatLong".to_string());
         assert!(location_value.name.contains("LatLongProperty"));
         assert_eq!(location_value.value, Value::LatLong(expected_value));
     }
 
+    #[cfg(feature = "test-tnt")]
     fn validate_number_value(number_value: &StructPropertyValue, expected_value: i64) {
         assert_eq!(number_value.data_type, "Number".to_string());
         assert!(number_value.name.contains("NumberProperty"));
         assert_eq!(number_value.value, Value::Number(expected_value));
     }
 
+    #[cfg(feature = "test-tnt")]
     fn validate_enum_value(enum_value: &StructPropertyValue, expected_value: i32) {
         assert_eq!(enum_value.data_type, "Enum".to_string());
         assert!(enum_value.name.contains("EnumProperty"));
@@ -2862,6 +3120,7 @@ mod test {
         }
     }
 
+    #[cfg(feature = "test-tnt")]
     fn validate_bytes_value(bytes_value: &StructPropertyValue, expected_value: &[u8]) {
         assert_eq!(bytes_value.data_type, "Bytes".to_string());
         assert!(bytes_value.name.contains("BytesProperty"));
@@ -2877,11 +3136,14 @@ mod test {
     /// error when there is no property with the specified property_name.
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-tnt")]
     async fn test_fetch_property_name_not_found() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_fetch_property_name_not_found");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_property_name_not_found",
+        );
         let response = srv
             .request(
                 http::Method::GET,
@@ -2899,12 +3161,15 @@ mod test {
     /// error when there is no record with the specified record_id.
     ///
     #[actix_rt::test]
+    #[cfg(feature = "test-tnt")]
     async fn test_fetch_property_record_id_not_found() {
-        run_migrations(&DATABASE_URL);
-        let test_pool = get_connection_pool();
-        let srv = create_test_server(Backend::Sawtooth, ResponseType::ClientBatchStatusResponseOK);
-
-        clear_postgres_database(&test_pool.get().unwrap()).unwrap();
+        run_migrations("test_fetch_property_record_id_not_found");
+        let test_pool = get_connection_pool("test_fetch_property_record_id_not_found");
+        let srv = create_test_server(
+            Backend::Sawtooth,
+            ResponseType::ClientBatchStatusResponseOK,
+            "test_fetch_property_record_id_not_found",
+        );
 
         populate_tnt_property_table(
             test_pool,
@@ -2957,6 +3222,7 @@ mod test {
             .expect("Failed to write batch statuses to bytes")
     }
 
+    #[cfg(feature = "test-batches")]
     fn get_batch_statuses_response_invalid_id() -> Vec<u8> {
         let mut batch_status_response = ClientBatchStatusResponse::new();
         batch_status_response.set_status(ClientBatchStatusResponse_Status::INVALID_ID);
@@ -2964,6 +3230,7 @@ mod test {
             .expect("Failed to write batch statuses to bytes")
     }
 
+    #[cfg(feature = "test-batches")]
     fn get_batch_statuses_response_validator_internal_error() -> Vec<u8> {
         let mut batch_status_response = ClientBatchStatusResponse::new();
         batch_status_response.set_status(ClientBatchStatusResponse_Status::INTERNAL_ERROR);
@@ -2971,6 +3238,7 @@ mod test {
             .expect("Failed to write batch statuses to bytes")
     }
 
+    #[cfg(feature = "test-batches")]
     fn get_submit_batches_response(status: ClientBatchSubmitResponse_Status) -> Vec<u8> {
         let mut batch_status_response = ClientBatchSubmitResponse::new();
         batch_status_response.set_status(status);
@@ -2978,6 +3246,7 @@ mod test {
             .expect("Failed to write batch statuses to bytes")
     }
 
+    #[cfg(feature = "test-batches")]
     fn get_batch_list() -> Vec<u8> {
         let mut batch_list = BatchList::new();
         let mut batch = Batch::new();
@@ -2987,6 +3256,7 @@ mod test {
             .expect("Failed to write batch statuses to bytes")
     }
 
+    #[cfg(feature = "test-pike")]
     fn get_agent(service_id: Option<String>) -> Vec<Agent> {
         vec![Agent {
             public_key: KEY1.to_string(),
@@ -3000,6 +3270,7 @@ mod test {
         }]
     }
 
+    #[cfg(feature = "test-tnt")]
     fn get_agents_with_roles(service_id: Option<String>) -> Vec<Agent> {
         vec![
             Agent {
@@ -3025,13 +3296,18 @@ mod test {
         ]
     }
 
-    fn populate_agent_table(pool: ConnectionPool<diesel::pg::PgConnection>, agents: Vec<Agent>) {
+    #[cfg(any(feature = "test-pike", feature = "test-tnt"))]
+    fn populate_agent_table(
+        pool: ConnectionPool<diesel::sqlite::SqliteConnection>,
+        agents: Vec<Agent>,
+    ) {
         let store = DieselAgentStore::new(pool.pool);
         agents
             .into_iter()
             .for_each(|agent| store.add_agent(agent).unwrap());
     }
 
+    #[cfg(feature = "test-pike")]
     fn get_organization(service_id: Option<String>) -> Vec<Organization> {
         vec![Organization {
             org_id: KEY2.to_string(),
@@ -3044,6 +3320,7 @@ mod test {
         }]
     }
 
+    #[cfg(feature = "test-pike")]
     fn get_updated_organization() -> Vec<Organization> {
         vec![
             Organization {
@@ -3067,14 +3344,16 @@ mod test {
         ]
     }
 
+    #[cfg(feature = "test-pike")]
     fn populate_organization_table(
-        pool: ConnectionPool<diesel::pg::PgConnection>,
+        pool: ConnectionPool<diesel::sqlite::SqliteConnection>,
         organizations: Vec<Organization>,
     ) {
         let store = DieselOrganizationStore::new(pool.pool);
         store.add_organizations(organizations).unwrap();
     }
 
+    #[cfg(feature = "test-schema")]
     fn get_grid_schema(service_id: Option<String>) -> Vec<Schema> {
         vec![Schema {
             start_commit_num: 0,
@@ -3087,6 +3366,7 @@ mod test {
         }]
     }
 
+    #[cfg(feature = "test-product")]
     fn get_product(service_id: Option<String>) -> Vec<Product> {
         vec![Product {
             product_id: "041205707820".to_string(),
@@ -3100,8 +3380,9 @@ mod test {
         }]
     }
 
+    #[cfg(feature = "test-location")]
     fn populate_location_table(
-        pool: ConnectionPool<diesel::pg::PgConnection>,
+        pool: ConnectionPool<diesel::sqlite::SqliteConnection>,
         locations: Vec<Location>,
     ) {
         let store = DieselLocationStore::new(pool.pool);
@@ -3110,9 +3391,11 @@ mod test {
             .for_each(|location| store.add_location(location).unwrap());
     }
 
+    #[cfg(feature = "test-location")]
     fn get_location(service_id: Option<String>) -> Vec<Location> {
         vec![Location {
             location_id: "0653114000000".to_string(),
+            location_address: "test_address".to_string(),
             location_namespace: "Grid Location".to_string(),
             owner: "phillips001".to_string(),
             attributes: get_location_attributes(service_id.clone()),
@@ -3122,6 +3405,7 @@ mod test {
         }]
     }
 
+    #[cfg(feature = "test-location")]
     fn get_location_attributes(service_id: Option<String>) -> Vec<LocationAttribute> {
         vec![
             LocationAttribute {
@@ -3129,7 +3413,6 @@ mod test {
                 end_commit_num: i64::MAX,
                 location_id: "0653114000000".to_string(),
                 location_address: "test_address".to_string(),
-                parent_property_name: None,
                 property_name: "location_name".to_string(),
                 data_type: "STRING".to_string(),
                 bytes_value: None,
@@ -3146,7 +3429,6 @@ mod test {
                 end_commit_num: i64::MAX,
                 location_id: "0653114000000".to_string(),
                 location_address: "test_address".to_string(),
-                parent_property_name: None,
                 property_name: "industry_sector".to_string(),
                 data_type: "STRING".to_string(),
                 bytes_value: None,
@@ -3161,6 +3443,7 @@ mod test {
         ]
     }
 
+    #[cfg(feature = "test-tnt")]
     fn get_associated_agents(service_id: Option<String>) -> Vec<AssociatedAgent> {
         vec![
             AssociatedAgent {
@@ -3186,6 +3469,7 @@ mod test {
         ]
     }
 
+    #[cfg(feature = "test-tnt")]
     fn get_associated_agents_updated() -> Vec<AssociatedAgent> {
         vec![
             AssociatedAgent {
@@ -3231,6 +3515,7 @@ mod test {
         ]
     }
 
+    #[cfg(feature = "test-tnt")]
     fn get_proposal(service_id: Option<String>) -> Vec<Proposal> {
         vec![Proposal {
             id: None,
@@ -3248,6 +3533,7 @@ mod test {
         }]
     }
 
+    #[cfg(feature = "test-tnt")]
     fn get_updated_proposal() -> Vec<Proposal> {
         vec![
             Proposal {
@@ -3281,6 +3567,7 @@ mod test {
         ]
     }
 
+    #[cfg(feature = "test-tnt")]
     fn get_record(record_id: &str, service_id: Option<String>) -> Vec<Record> {
         vec![Record {
             id: None,
@@ -3295,6 +3582,7 @@ mod test {
         }]
     }
 
+    #[cfg(feature = "test-tnt")]
     fn get_updated_record() -> Vec<Record> {
         vec![
             Record {
@@ -3322,6 +3610,7 @@ mod test {
         ]
     }
 
+    #[cfg(feature = "test-tnt")]
     fn get_multiple_records() -> Vec<Record> {
         vec![
             Record {
@@ -3360,8 +3649,9 @@ mod test {
         ]
     }
 
+    #[cfg(any(feature = "test-schema", feature = "test-tnt"))]
     fn populate_grid_schema_table(
-        pool: ConnectionPool<diesel::pg::PgConnection>,
+        pool: ConnectionPool<diesel::sqlite::SqliteConnection>,
         schemas: Vec<Schema>,
     ) {
         let store = DieselSchemaStore::new(pool.pool);
@@ -3370,8 +3660,9 @@ mod test {
             .for_each(|schema| store.add_schema(schema).unwrap());
     }
 
+    #[cfg(feature = "test-product")]
     fn populate_product_table(
-        pool: ConnectionPool<diesel::pg::PgConnection>,
+        pool: ConnectionPool<diesel::sqlite::SqliteConnection>,
         products: Vec<Product>,
     ) {
         let store = DieselProductStore::new(pool.pool);
@@ -3380,6 +3671,7 @@ mod test {
             .for_each(|product| store.add_product(product).unwrap());
     }
 
+    #[cfg(feature = "test-tnt")]
     fn get_property_for_record(service_id: Option<String>) -> Vec<Property> {
         vec![
             Property {
@@ -3407,6 +3699,7 @@ mod test {
         ]
     }
 
+    #[cfg(feature = "test-tnt")]
     fn get_reporter_for_property_record(service_id: Option<String>) -> Vec<Reporter> {
         vec![
             Reporter {
@@ -3434,6 +3727,7 @@ mod test {
         ]
     }
 
+    #[cfg(feature = "test-tnt")]
     fn get_reported_value_for_property_record(service_id: Option<String>) -> Vec<ReportedValue> {
         vec![
             ReportedValue {
@@ -3474,6 +3768,8 @@ mod test {
             },
         ]
     }
+
+    #[cfg(feature = "test-tnt")]
     fn get_property(service_id: Option<String>) -> Vec<Property> {
         vec![Property {
             id: None,
@@ -3488,6 +3784,7 @@ mod test {
         }]
     }
 
+    #[cfg(feature = "test-tnt")]
     fn get_reporter(service_id: Option<String>) -> Vec<Reporter> {
         vec![
             Reporter {
@@ -3515,8 +3812,9 @@ mod test {
         ]
     }
 
+    #[cfg(feature = "test-tnt")]
     fn populate_tnt_property_table(
-        pool: ConnectionPool<diesel::pg::PgConnection>,
+        pool: ConnectionPool<diesel::sqlite::SqliteConnection>,
         properties: Vec<Property>,
         reported_values: Vec<ReportedValue>,
         reporter: Vec<Reporter>,
@@ -3527,6 +3825,7 @@ mod test {
         store.add_reporters(reporter).unwrap();
     }
 
+    #[cfg(feature = "test-schema")]
     fn get_property_definition(service_id: Option<String>) -> Vec<PropertyDefinition> {
         vec![
             PropertyDefinition {
@@ -3558,6 +3857,7 @@ mod test {
         ]
     }
 
+    #[cfg(feature = "test-tnt")]
     fn get_grid_schema_for_struct_record(service_id: Option<String>) -> Vec<Schema> {
         vec![Schema {
             start_commit_num: 0,
@@ -3570,6 +3870,7 @@ mod test {
         }]
     }
 
+    #[cfg(feature = "test-tnt")]
     fn get_grid_property_definition_struct_for_record(
         service_id: Option<String>,
     ) -> Vec<PropertyDefinition> {
@@ -3588,6 +3889,7 @@ mod test {
         }]
     }
 
+    #[cfg(feature = "test-tnt")]
     fn get_grid_schema_for_record(service_id: Option<String>) -> Vec<Schema> {
         vec![Schema {
             start_commit_num: 0,
@@ -3600,6 +3902,7 @@ mod test {
         }]
     }
 
+    #[cfg(feature = "test-tnt")]
     fn get_grid_property_definition_for_record(
         service_id: Option<String>,
     ) -> Vec<PropertyDefinition> {
@@ -3633,6 +3936,7 @@ mod test {
         ]
     }
 
+    #[cfg(feature = "test-product")]
     fn get_product_property_value(service_id: Option<String>) -> Vec<PropertyValue> {
         vec![
             PropertyValue {
@@ -3670,33 +3974,47 @@ mod test {
         ]
     }
 
+    #[cfg(feature = "test-tnt")]
     fn populate_associated_agent_table(
-        pool: ConnectionPool<diesel::pg::PgConnection>,
+        pool: ConnectionPool<diesel::sqlite::SqliteConnection>,
         associated_agents: Vec<AssociatedAgent>,
     ) {
         let store = DieselTrackAndTraceStore::new(pool.pool);
         store.add_associated_agents(associated_agents).unwrap();
     }
 
+    #[cfg(feature = "test-tnt")]
     fn populate_proposal_table(
-        pool: ConnectionPool<diesel::pg::PgConnection>,
+        pool: ConnectionPool<diesel::sqlite::SqliteConnection>,
         proposals: Vec<Proposal>,
     ) {
         let store = DieselTrackAndTraceStore::new(pool.pool);
         store.add_proposals(proposals).unwrap();
     }
 
-    fn populate_record_table(pool: ConnectionPool<diesel::pg::PgConnection>, records: Vec<Record>) {
+    #[cfg(feature = "test-tnt")]
+    fn populate_record_table(
+        pool: ConnectionPool<diesel::sqlite::SqliteConnection>,
+        records: Vec<Record>,
+    ) {
         let store = DieselTrackAndTraceStore::new(pool.pool);
         store.add_records(records).unwrap();
     }
 
+    #[cfg(any(
+        feature = "test-pike",
+        feature = "test-tnt",
+        feature = "test-product",
+        feature = "test-location",
+        feature = "test-schema"
+    ))]
     fn run_migrations(database_url: &str) {
-        let connection = PgConnection::establish(database_url)
+        let connection = SqliteConnection::establish(database_url)
             .expect("Failed to stablish connection with database");
-        run_postgres_migrations(&connection).expect("Migrations failed");
+        run_sqlite_migrations(&connection).expect("Migrations failed");
     }
 
+    #[cfg(feature = "test-tnt")]
     fn get_reported_value(service_id: Option<String>) -> Vec<ReportedValue> {
         vec![
             ReportedValue {

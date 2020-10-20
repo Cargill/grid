@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::CommitStoreOperations;
-use crate::grid_db::commits::store::diesel::{schema::commit, CommitStoreError};
+use crate::grid_db::commits::store::diesel::{schema::commits, CommitStoreError};
 
 use diesel::{dsl::max, prelude::*};
 
@@ -26,8 +26,8 @@ impl<'a> CommitStoreGetNextCommitNumOperation
     for CommitStoreOperations<'a, diesel::pg::PgConnection>
 {
     fn get_next_commit_num(&self) -> Result<i64, CommitStoreError> {
-        let commit_num = commit::table
-            .select(max(commit::commit_num))
+        let commit_num = commits::table
+            .select(max(commits::commit_num))
             .first(self.conn)
             .map(|option: Option<i64>| match option {
                 Some(num) => num + 1,
@@ -46,8 +46,8 @@ impl<'a> CommitStoreGetNextCommitNumOperation
     for CommitStoreOperations<'a, diesel::sqlite::SqliteConnection>
 {
     fn get_next_commit_num(&self) -> Result<i64, CommitStoreError> {
-        let commit_num = commit::table
-            .select(max(commit::commit_num))
+        let commit_num = commits::table
+            .select(max(commits::commit_num))
             .first(self.conn)
             .map(|option: Option<i64>| match option {
                 Some(num) => num + 1,

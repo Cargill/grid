@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::CommitStoreOperations;
-use crate::grid_db::commits::store::diesel::{schema::commit, CommitStoreError};
+use crate::grid_db::commits::store::diesel::{schema::commits, CommitStoreError};
 
 use crate::grid_db::commits::store::diesel::models::{CommitModel, NewCommitModel};
 use diesel::{dsl::insert_into, prelude::*, result::Error::NotFound};
@@ -25,8 +25,8 @@ pub(in crate::grid_db::commits) trait CommitStoreAddCommitOperation {
 #[cfg(feature = "postgres")]
 impl<'a> CommitStoreAddCommitOperation for CommitStoreOperations<'a, diesel::pg::PgConnection> {
     fn add_commit(&self, commit: NewCommitModel) -> Result<(), CommitStoreError> {
-        let duplicate_commit = commit::table
-            .filter(commit::commit_id.eq(&commit.commit_id))
+        let duplicate_commit = commits::table
+            .filter(commits::commit_id.eq(&commit.commit_id))
             .first::<CommitModel>(self.conn)
             .map(Some)
             .or_else(|err| if err == NotFound { Ok(None) } else { Err(err) })
@@ -41,7 +41,7 @@ impl<'a> CommitStoreAddCommitOperation for CommitStoreOperations<'a, diesel::pg:
             });
         }
 
-        insert_into(commit::table)
+        insert_into(commits::table)
             .values(commit)
             .execute(self.conn)
             .map(|_| ())
@@ -58,8 +58,8 @@ impl<'a> CommitStoreAddCommitOperation
     for CommitStoreOperations<'a, diesel::sqlite::SqliteConnection>
 {
     fn add_commit(&self, commit: NewCommitModel) -> Result<(), CommitStoreError> {
-        let duplicate_commit = commit::table
-            .filter(commit::commit_id.eq(&commit.commit_id))
+        let duplicate_commit = commits::table
+            .filter(commits::commit_id.eq(&commit.commit_id))
             .first::<CommitModel>(self.conn)
             .map(Some)
             .or_else(|err| if err == NotFound { Ok(None) } else { Err(err) })
@@ -74,7 +74,7 @@ impl<'a> CommitStoreAddCommitOperation
             });
         }
 
-        insert_into(commit::table)
+        insert_into(commits::table)
             .values(commit)
             .execute(self.conn)
             .map(|_| ())

@@ -72,7 +72,12 @@ experimental = [
 
 sawtooth-support = []
 splinter-support = ["scabbard", "splinter", "reqwest", "sabre-sdk", "transact", "transact/contract-archive"]
-test-api = []
+test-tnt = []
+test-pike = []
+test-product = []
+test-location = []
+test-schema = []
+test-batches = []
 
 [package.metadata.deb]
 maintainer = "The Hyperledger Grid Team"

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::CommitStoreOperations;
-use crate::grid_db::commits::store::diesel::{schema::chain_record, schema::commit};
+use crate::grid_db::commits::store::diesel::{schema::chain_record, schema::commits};
 use crate::grid_db::commits::MAX_COMMIT_NUM;
 
 use crate::grid_db::commits::store::CommitStoreError;
@@ -49,8 +49,8 @@ impl<'a> CommitStoreResolveForkOperation for CommitStoreOperations<'a, diesel::p
                 source: Some(Box::new(err)),
             })?;
 
-        delete(commit::table)
-            .filter(commit::commit_num.ge(commit_num))
+        delete(commits::table)
+            .filter(commits::commit_num.ge(commit_num))
             .execute(self.conn)
             .map(|_| ())
             .map_err(|err| CommitStoreError::OperationError {
@@ -86,8 +86,8 @@ impl<'a> CommitStoreResolveForkOperation
                 source: Some(Box::new(err)),
             })?;
 
-        delete(commit::table)
-            .filter(commit::commit_num.ge(commit_num))
+        delete(commits::table)
+            .filter(commits::commit_num.ge(commit_num))
             .execute(self.conn)
             .map(|_| ())
             .map_err(|err| CommitStoreError::OperationError {

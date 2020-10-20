@@ -14,7 +14,7 @@
 
 use crate::grid_db::{
     agents::store::diesel::schema::{agent::dsl::*, role::dsl::role},
-    commits::store::diesel::schema::{chain_record::dsl::*, commit::dsl::*},
+    commits::store::diesel::schema::{chain_record::dsl::*, commits::dsl::*},
     locations::store::diesel::schema::{location::dsl::*, location_attribute::dsl::*},
     organizations::store::diesel::schema::organization::dsl::*,
     products::store::diesel::schema::{product::dsl::*, product_property_value::dsl::*},
@@ -59,7 +59,7 @@ pub fn clear_database(conn: &SqliteConnection) -> Result<(), DatabaseError> {
         diesel::delete(agent).execute(conn)?;
         diesel::delete(role).execute(conn)?;
         diesel::delete(chain_record).execute(conn)?;
-        diesel::delete(commit).execute(conn)?;
+        diesel::delete(commits).execute(conn)?;
         diesel::delete(location).execute(conn)?;
         diesel::delete(location_attribute).execute(conn)?;
         diesel::delete(organization).execute(conn)?;
