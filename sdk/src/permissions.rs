@@ -27,7 +27,7 @@ cfg_if! {
     }
 }
 
-use crate::protocol::pike::state::{Agent, AgentList};
+use crate::protocol::pike::state::{Agent, AgentList, Role};
 use crate::protos::{FromBytes, ProtoConversionError};
 
 const PIKE_NAMESPACE: &str = "cad11d";
@@ -111,11 +111,11 @@ impl<'a> PermissionChecker<'a> {
     pub fn has_permission(
         &self,
         public_key: &str,
-        permission: &str,
+        role: &Role,
     ) -> Result<bool, PermissionCheckerError> {
         let agent = self.get_agent(public_key)?;
         match agent {
-            Some(agent) => Ok(agent.roles().iter().any(|r| r == permission)),
+            Some(agent) => Ok(agent.roles().iter().any(|r| r == role.name())),
             None => Err(PermissionCheckerError::InvalidPublicKey(format!(
                 "The signer is not an Agent: {}",
                 public_key
