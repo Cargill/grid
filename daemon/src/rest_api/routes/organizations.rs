@@ -22,7 +22,7 @@ use crate::rest_api::{
 
 use actix::{Handler, Message, SyncContext};
 use actix_web::{web, HttpResponse};
-use grid_sdk::organizations::store::Organization;
+use grid_sdk::pike::store::Organization;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
@@ -133,7 +133,7 @@ impl Handler<FetchOrganization> for DbExecutor {
 
     fn handle(&mut self, msg: FetchOrganization, _: &mut SyncContext<Self>) -> Self::Result {
         match self
-            .organization_store
+            .pike_store
             .fetch_organization(&msg.organization_id, msg.service_id.as_deref())?
         {
             Some(organization) => OrganizationSlice::try_from(organization),
