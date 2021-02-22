@@ -19,9 +19,7 @@ volumes:
 
 services:
   tnt-contract-builder:
-    logging:
-      driver: none
-    image: tnt-contract-builder
+    image: tnt-contract-builder:${ISOLATION_ID}
     container_name: tnt-contract-builder
     build:
       context: ..
@@ -44,9 +42,7 @@ services:
       "
 
   schema-contract-builder:
-    logging:
-      driver: none
-    image: schema-contract-builder
+    image: schema-contract-builder:${ISOLATION_ID}
     container_name: schema-contract-builder
     build:
       context: ..
@@ -68,9 +64,7 @@ services:
       "
 
   pike-contract-builder:
-    logging:
-      driver: none
-    image: pike-contract-builder
+    image: pike-contract-builder:${ISOLATION_ID}
     container_name: pike-contract-builder
     build:
       context: ..
@@ -91,9 +85,7 @@ services:
       "
 
   product-contract-builder:
-    logging:
-      driver: none
-    image: product-contract-builder
+    image: product-contract-builder:${ISOLATION_ID}
     container_name: product-contract-builder
     build:
       context: ..
@@ -118,8 +110,6 @@ services:
       "
 
   validator:
-    logging:
-      driver: none
     image: hyperledger/sawtooth-validator:1.1
     container_name: grid-sawtooth-validator
     expose:
@@ -155,8 +145,6 @@ services:
       "
 
   devmode-engine:
-    logging:
-      driver: none
     image: hyperledger/sawtooth-devmode-engine-rust:1.1
     container_name: sawtooth-devmode-engine-rust-default
     depends_on:
@@ -164,8 +152,6 @@ services:
     entrypoint: devmode-engine-rust -C tcp://validator:5050
 
   settings-tp:
-    logging:
-      driver: none
     image: hyperledger/sawtooth-settings-tp:1.1
     container_name: grid-sawtooth-settings-tp
     depends_on:
@@ -173,8 +159,6 @@ services:
     entrypoint: settings-tp -vv -C tcp://validator:4004
 
   rest-api:
-    logging:
-      driver: none
     image: hyperledger/sawtooth-rest-api:1.1
     container_name: grid-sawtooth-rest-api
     expose:
@@ -224,8 +208,6 @@ services:
       "
 
   grid-cli:
-    logging:
-      driver: none
     image: grid-cli:${ISOLATION_ID}
     container_name: grid-cli
     build:
@@ -238,8 +220,6 @@ services:
       tail -f /dev/null
 
   sabre-tp:
-    logging:
-      driver: none
     image: hyperledger/sawtooth-sabre-tp:0.5
     container_name: sawtooth-sabre-tp
     depends_on:
@@ -247,8 +227,6 @@ services:
     entrypoint: sawtooth-sabre -vv --connect tcp://validator:4004
 
   sawtooth-shell:
-    logging:
-      driver: none
     image: hyperledger/sawtooth-shell:1.1
     container_name: grid-sawtooth-shell
     command: |
@@ -257,8 +235,6 @@ services:
         tail -f /dev/null
       "
   db:
-    logging:
-      driver: none
     image: postgres
     restart: always
     expose:
