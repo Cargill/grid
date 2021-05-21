@@ -46,9 +46,9 @@ impl fmt::Display for PermissionCheckerError {
         match *self {
             PermissionCheckerError::Context(ref e) => e.fmt(f),
             PermissionCheckerError::InvalidPublicKey(ref msg) => {
-                write!(f, "InvalidPublicKey: {}", msg)
+                write!(f, msg)
             }
-            PermissionCheckerError::InvalidRole(ref msg) => write!(f, "InvalidRole: {}", msg),
+            PermissionCheckerError::InvalidRole(ref msg) => write!(f, msg),
             PermissionCheckerError::ProtoConversion(ref e) => e.fmt(f),
         }
     }
