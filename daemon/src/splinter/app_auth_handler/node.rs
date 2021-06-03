@@ -14,7 +14,9 @@
  * limitations under the License.
  * -----------------------------------------------------------------------------
  */
+use reqwest::{blocking::Client, header};
 use serde_json::Value;
+
 use std::error::Error;
 use std::fmt;
 use std::thread;
@@ -35,10 +37,10 @@ impl fmt::Display for GetNodeError {
     }
 }
 
-pub fn get_node_id(splinterd_url: String) -> Result<String, GetNodeError> {
+pub fn get_node_id(splinterd_url: String, auth_token: String) -> Result<String, GetNodeError> {
     let uri = format!("{}/status", splinterd_url);
 
-    let body = wait_for_status(&uri)?;
+    let body = wait_for_status(&uri, &auth_token)?;
 
     let node_id_val = body
         .get("node_id")
@@ -51,10 +53,21 @@ pub fn get_node_id(splinterd_url: String) -> Result<String, GetNodeError> {
     Ok(node_id.to_string())
 }
 
-fn wait_for_status(uri: &str) -> Result<Value, GetNodeError> {
+fn wait_for_status(uri: &str, auth_token: &str) -> Result<Value, GetNodeError> {
+    let mut headers = header::HeaderMap::new();
+    headers.insert(
+        header::AUTHORIZATION,
+        header::HeaderValue::from_str(auth_token)
+            .map_err(|err| GetNodeError(format!("{}", err)))?,
+    );
+    let client = Client::builder()
+        .default_headers(headers)
+        .build()
+        .map_err(|err| GetNodeError(format!("{}", err)))?;
+
     let mut wait_time = 1;
     loop {
-        match reqwest::blocking::get(uri) {
+        match client.get(uri).send() {
             Ok(res) => {
                 return res.json().map_err(|err| {
                     GetNodeError(format!("Failed to parse response body: {}", err))

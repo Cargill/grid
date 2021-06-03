@@ -49,6 +49,7 @@ impl ScabbardEventConnectionFactory {
         &self,
         circuit_id: &str,
         service_id: &str,
+        auth_token: &str,
     ) -> Result<ScabbardEventConnection, ScabbardEventConnectionError> {
         let source = format!("{}::{}", circuit_id, service_id);
         let connection_url = format!(
@@ -60,6 +61,7 @@ impl ScabbardEventConnectionFactory {
             source,
             connection_url,
             self.igniter.clone(),
+            auth_token.into(),
         ))
     }
 }
@@ -80,15 +82,17 @@ pub struct ScabbardEventConnection {
     connection_url: String,
     igniter: Igniter,
     connection_state: RefCell<ConnectionState>,
+    auth_token: String,
 }
 
 impl ScabbardEventConnection {
-    fn new(name: String, connection_url: String, igniter: Igniter) -> Self {
+    fn new(name: String, connection_url: String, igniter: Igniter, auth_token: String) -> Self {
         Self {
             name,
             connection_url,
             igniter,
             connection_state: RefCell::new(ConnectionState::Disconnected),
+            auth_token,
         }
     }
 }
@@ -114,23 +118,25 @@ impl EventConnection for ScabbardEventConnection {
         } else {
             self.connection_url.clone()
         };
-        let mut state_delta_ws = WebSocketClient::new(&url, move |_, event: StateChangeEvent| {
-            match sender.try_send(ConnectionCommand::Message(event)) {
-                Ok(_) => (),
-                Err(TrySendError::Full(ConnectionCommand::Message(event))) => {
-                    error!(
-                        "dropping commit event {} from {} due to back pressure",
-                        event.id, source
-                    );
+
+        let mut state_delta_ws =
+            WebSocketClient::new(&url, &self.auth_token, move |_, event: StateChangeEvent| {
+                match sender.try_send(ConnectionCommand::Message(event)) {
+                    Ok(_) => (),
+                    Err(TrySendError::Full(ConnectionCommand::Message(event))) => {
+                        error!(
+                            "dropping commit event {} from {} due to back pressure",
+                            event.id, source
+                        );
+                    }
+                    Err(TrySendError::Full(ConnectionCommand::Shutdown)) => {
+                        // This shouldn't happen, since we never send this type
+                        unreachable!()
+                    }
+                    Err(TrySendError::Disconnected(_)) => return WsResponse::Close,
                 }
-                Err(TrySendError::Full(ConnectionCommand::Shutdown)) => {
-                    // This shouldn't happen, since we never send this type
-                    unreachable!()
-                }
-                Err(TrySendError::Disconnected(_)) => return WsResponse::Close,
-            }
-            WsResponse::Empty
-        });
+                WsResponse::Empty
+            });
 
         state_delta_ws.on_error(move |err, ctx| {
             error!(

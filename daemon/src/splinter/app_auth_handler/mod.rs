@@ -21,6 +21,7 @@ mod sabre;
 
 use std::collections::HashMap;
 
+use cylinder::{jwt::JsonWebTokenBuilder, secp256k1::Secp256k1Context, Context, PrivateKey};
 use splinter::{
     admin::messages::AdminServiceEvent,
     events::{Igniter, ParseBytes, ParseError, WebSocketClient, WebSocketError, WsResponse},
@@ -64,21 +65,35 @@ pub fn run(
 ) -> Result<(), AppAuthHandlerError> {
     let registration_route = format!("{}/ws/admin/register/grid", &splinterd_url);
 
-    let node_id = get_node_id(splinterd_url.clone())?;
+    let context = Secp256k1Context::new();
+    let private_key = PrivateKey::new_from_hex(&scabbard_admin_key)
+        .map_err(|err| AppAuthHandlerError::from_source(Box::new(err)))?;
+    let signer = context.new_signer(private_key);
+    let encoded_token = JsonWebTokenBuilder::new()
+        .build(&*signer)
+        .map(|token| format!("Bearer Cylinder:{}", token))
+        .map_err(|err| AppAuthHandlerError::from_source(Box::new(err)))?;
 
-    let mut ws = WebSocketClient::new(&registration_route, move |_ctx, event| {
-        if let Err(err) = process_admin_event(
-            event,
-            &event_connection_factory,
-            handler.cloned_box(),
-            &node_id,
-            &scabbard_admin_key,
-            &splinterd_url,
-        ) {
-            error!("Failed to process admin event: {}", err);
-        }
-        WsResponse::Empty
-    });
+    let node_id = get_node_id(splinterd_url.clone(), encoded_token.clone())?;
+
+    let mut ws = WebSocketClient::new(
+        &registration_route,
+        &encoded_token.clone(),
+        move |_ctx, event| {
+            if let Err(err) = process_admin_event(
+                event,
+                &event_connection_factory,
+                handler.cloned_box(),
+                &node_id,
+                &scabbard_admin_key,
+                &splinterd_url,
+                &encoded_token,
+            ) {
+                error!("Failed to process admin event: {}", err);
+            }
+            WsResponse::Empty
+        },
+    );
 
     ws.set_reconnect(RECONNECT);
     ws.set_reconnect_limit(RECONNECT_LIMIT);
@@ -111,6 +126,7 @@ fn process_admin_event(
     node_id: &str,
     scabbard_admin_key: &str,
     splinterd_url: &str,
+    auth_token: &str,
 ) -> Result<(), AppAuthHandlerError> {
     debug!("Received the event at {}", event.timestamp);
     match event.admin_event {
@@ -132,7 +148,8 @@ fn process_admin_event(
                 }
             };
 
-            let scabbard_args: HashMap<_, _> = service.arguments.iter().cloned().collect();
+            let scabbard_args: HashMap<String, String> =
+                service.arguments.iter().cloned().collect();
 
             let proposed_admin_pubkeys = scabbard_args
                 .get("admin_keys")
@@ -140,25 +157,21 @@ fn process_admin_event(
                     AppAuthHandlerError::with_message(
                         "Scabbard Service is not properly configured with \"admin_keys\" argument.",
                     )
-                })
-                .and_then(|keys_str| {
-                    serde_json::from_str::<Vec<String>>(keys_str).map_err(|err| {
-                        AppAuthHandlerError::with_message(&format!(
-                            "unable to parse application metadata: {}",
-                            err
-                        ))
-                    })
-                })?;
+                })?
+                .to_string();
 
-            let event_connection = event_connection_factory
-                .create_connection(&msg_proposal.circuit_id, &service.service_id)?;
+            let event_connection = event_connection_factory.create_connection(
+                &msg_proposal.circuit_id,
+                &service.service_id,
+                &auth_token,
+            )?;
 
             EventProcessor::start(event_connection, None, vec![handler])
                 .map_err(|err| AppAuthHandlerError::from_source(Box::new(err)))?;
 
             setup_grid(
                 scabbard_admin_key,
-                proposed_admin_pubkeys,
+                vec![proposed_admin_pubkeys],
                 &splinterd_url,
                 &service.service_id,
                 &msg_proposal.circuit_id,
