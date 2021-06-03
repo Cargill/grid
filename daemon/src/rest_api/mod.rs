@@ -176,9 +176,13 @@ mod test {
         SubmitBatches,
     };
     #[cfg(feature = "test-postgres")]
-    use grid_sdk::migrations::{clear_postgres_database, run_postgres_migrations};
+    use grid_sdk::migrations::run_postgres_migrations;
+    #[cfg(feature = "test-postgres")]
+    use grid_sdk::testing::clear_postgres_database;
     #[cfg(not(feature = "test-postgres"))]
-    use grid_sdk::migrations::{clear_sqlite_database, run_sqlite_migrations};
+    use grid_sdk::migrations::run_sqlite_migrations;
+    #[cfg(not(feature = "test-postgres"))]
+    use grid_sdk::testing::clear_sqlite_database;
     #[cfg(feature = "track-and-trace")]
     use grid_sdk::rest_api::resources::track_and_trace::v1::*;
     use grid_sdk::rest_api::resources::{
