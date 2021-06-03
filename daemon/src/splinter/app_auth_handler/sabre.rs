@@ -15,7 +15,6 @@
  * -----------------------------------------------------------------------------
  */
 
-use std::convert::TryInto;
 use std::time::Duration;
 
 #[cfg(feature = "location")]
@@ -29,15 +28,14 @@ use grid_sdk::purchase_order::addressing::GRID_PURCHASE_ORDER_NAMESPACE;
 #[cfg(feature = "schema")]
 use grid_sdk::schemas::addressing::GRID_SCHEMA_NAMESPACE;
 
+use cylinder::{
+    jwt::JsonWebTokenBuilder, secp256k1::Secp256k1Context, Context, PrivateKey, Signer,
+};
 use sabre_sdk::protocol::payload::{
     CreateContractActionBuilder, CreateContractRegistryActionBuilder,
     CreateNamespaceRegistryActionBuilder, CreateNamespaceRegistryPermissionActionBuilder,
 };
-use sawtooth_sdk::signing::{
-    create_context, secp256k1::Secp256k1PrivateKey, transact::TransactSigner,
-    Signer as SawtoothSigner,
-};
-use scabbard::client::{ScabbardClient, ServiceId};
+use scabbard::client::{ReqwestScabbardClientBuilder, ScabbardClient, ServiceId};
 #[cfg(any(
     feature = "location",
     feature = "pike",
@@ -49,7 +47,6 @@ use transact::contract::archive::default_scar_path;
 use transact::{
     contract::archive::SmartContractArchive,
     protocol::{batch::BatchBuilder, transaction::Transaction},
-    signing::Signer,
 };
 
 use crate::splinter::app_auth_handler::error::AppAuthHandlerError;
@@ -72,10 +69,17 @@ pub fn setup_grid(
     ))]
     let version = env!("CARGO_PKG_VERSION");
 
-    let signer = new_signer(&scabbard_admin_key)?;
+    let context = Secp256k1Context::new();
+    let private_key = PrivateKey::new_from_hex(&scabbard_admin_key)
+        .map_err(|err| AppAuthHandlerError::from_source(Box::new(err)))?;
+    let signer = context.new_signer(private_key);
 
     // The node with the first key in the list of scabbard admins is responsible for setting up xo
-    let public_key = bytes_to_hex_str(signer.public_key());
+    let public_key = signer
+        .public_key()
+        .map(|pk| pk.as_hex())
+        .map_err(|err| AppAuthHandlerError::from_source(Box::new(err)))?;
+
     let is_submitter = match proposed_admin_pubkeys.get(0) {
         Some(submitting_key) => &public_key == submitting_key,
         None => false,
@@ -88,27 +92,40 @@ pub fn setup_grid(
 
     // Make Pike transactions
     #[cfg(feature = "pike")]
-    make_pike_txns(&mut txns, &version, &signer)?;
+    make_pike_txns(&mut txns, &version, &*signer)?;
 
     // Make Product transactions
     #[cfg(feature = "product")]
-    make_product_txns(&mut txns, &version, &signer)?;
+    make_product_txns(&mut txns, &version, &*signer)?;
 
     // Make Location transactions
     #[cfg(feature = "location")]
-    make_location_txns(&mut txns, &version, &signer)?;
+    make_location_txns(&mut txns, &version, &*signer)?;
 
     // Make schema transactions
     #[cfg(feature = "schema")]
-    make_schema_txns(&mut txns, &version, &signer)?;
+    make_schema_txns(&mut txns, &version, &*signer)?;
 
     // Make Purchase Order transactions
     #[cfg(feature = "purchase-order")]
-    make_purchase_order_txns(&mut txns, &version, &signer)?;
+    make_purchase_order_txns(&mut txns, &version, &*signer)?;
 
-    let batch = BatchBuilder::new().with_transactions(txns).build(&signer)?;
+    let batch = BatchBuilder::new()
+        .with_transactions(txns)
+        .build(&*signer)?;
 
-    ScabbardClient::new(&splinterd_url)
+    let encoded_token = JsonWebTokenBuilder::new()
+        .build(&*signer)
+        .map(|token| format!("Bearer Cylinder:{}", token))
+        .map_err(|err| AppAuthHandlerError::from_source(Box::new(err)))?;
+
+    let client = ReqwestScabbardClientBuilder::default()
+        .with_url(splinterd_url)
+        .with_auth(&encoded_token)
+        .build()
+        .map_err(|err| AppAuthHandlerError::from_source(Box::new(err)))?;
+
+    client
         .submit(
             &ServiceId::new(circuit_id, service_id),
             vec![batch],
@@ -123,20 +140,26 @@ pub fn setup_grid(
 fn make_pike_txns(
     txns: &mut Vec<Transaction>,
     version: &str,
-    signer: &TransactSigner,
+    signer: &dyn Signer,
 ) -> Result<(), AppAuthHandlerError> {
     let pike_contract =
-        SmartContractArchive::from_scar_file("grid_pike", &version, &default_scar_path())?;
+        SmartContractArchive::from_scar_file("grid-pike", &version, &default_scar_path())?;
+
+    let public_key = signer
+        .public_key()
+        .map(|pk| pk.as_hex())
+        .map_err(|err| AppAuthHandlerError::from_source(Box::new(err)))?;
+
     let pike_contract_registry_txn = CreateContractRegistryActionBuilder::new()
         .with_name(String::from(&pike_contract.metadata.name))
-        .with_owners(vec![bytes_to_hex_str(signer.public_key())])
+        .with_owners(vec![public_key.clone()])
         .into_payload_builder()?
         .into_transaction_builder(signer)?
         .build(signer)?;
     let pike_contract_txn = make_upload_contract_txn(signer, &pike_contract, PIKE_NAMESPACE)?;
     let pike_namespace_registry_txn = CreateNamespaceRegistryActionBuilder::new()
         .with_namespace(PIKE_NAMESPACE.into())
-        .with_owners(vec![bytes_to_hex_str(signer.public_key())])
+        .with_owners(vec![public_key])
         .into_payload_builder()?
         .into_transaction_builder(signer)?
         .build(signer)?;
@@ -164,13 +187,19 @@ fn make_pike_txns(
 fn make_product_txns(
     txns: &mut Vec<Transaction>,
     version: &str,
-    signer: &TransactSigner,
+    signer: &dyn Signer,
 ) -> Result<(), AppAuthHandlerError> {
     let product_contract =
         SmartContractArchive::from_scar_file("grid-product", &version, &default_scar_path())?;
+
+    let public_key = signer
+        .public_key()
+        .map(|pk| pk.as_hex())
+        .map_err(|err| AppAuthHandlerError::from_source(Box::new(err)))?;
+
     let product_contract_registry_txn = CreateContractRegistryActionBuilder::new()
         .with_name(String::from(&product_contract.metadata.name))
-        .with_owners(vec![bytes_to_hex_str(signer.public_key())])
+        .with_owners(vec![public_key.clone()])
         .into_payload_builder()?
         .into_transaction_builder(signer)?
         .build(signer)?;
@@ -178,7 +207,7 @@ fn make_product_txns(
         make_upload_contract_txn(signer, &product_contract, GRID_PRODUCT_NAMESPACE)?;
     let product_namespace_registry_txn = CreateNamespaceRegistryActionBuilder::new()
         .with_namespace(GRID_PRODUCT_NAMESPACE.into())
-        .with_owners(vec![bytes_to_hex_str(signer.public_key())])
+        .with_owners(vec![public_key])
         .into_payload_builder()?
         .into_transaction_builder(signer)?
         .build(signer)?;
@@ -225,13 +254,19 @@ fn make_product_txns(
 fn make_location_txns(
     txns: &mut Vec<Transaction>,
     version: &str,
-    signer: &TransactSigner,
+    signer: &dyn Signer,
 ) -> Result<(), AppAuthHandlerError> {
     let location_contract =
         SmartContractArchive::from_scar_file("grid-location", &version, &default_scar_path())?;
+
+    let public_key = signer
+        .public_key()
+        .map(|pk| pk.as_hex())
+        .map_err(|err| AppAuthHandlerError::from_source(Box::new(err)))?;
+
     let location_contract_registry_txn = CreateContractRegistryActionBuilder::new()
         .with_name(String::from(&location_contract.metadata.name))
-        .with_owners(vec![bytes_to_hex_str(signer.public_key())])
+        .with_owners(vec![public_key.clone()])
         .into_payload_builder()?
         .into_transaction_builder(signer)?
         .build(signer)?;
@@ -239,7 +274,7 @@ fn make_location_txns(
         make_upload_contract_txn(signer, &location_contract, GRID_LOCATION_NAMESPACE)?;
     let location_namespace_registry_txn = CreateNamespaceRegistryActionBuilder::new()
         .with_namespace(GRID_LOCATION_NAMESPACE.into())
-        .with_owners(vec![bytes_to_hex_str(signer.public_key())])
+        .with_owners(vec![public_key])
         .into_payload_builder()?
         .into_transaction_builder(signer)?
         .build(signer)?;
@@ -286,13 +321,19 @@ fn make_location_txns(
 fn make_schema_txns(
     txns: &mut Vec<Transaction>,
     version: &str,
-    signer: &TransactSigner,
+    signer: &dyn Signer,
 ) -> Result<(), AppAuthHandlerError> {
     let schema_contract =
         SmartContractArchive::from_scar_file("grid-schema", &version, &default_scar_path())?;
+
+    let public_key = signer
+        .public_key()
+        .map(|pk| pk.as_hex())
+        .map_err(|err| AppAuthHandlerError::from_source(Box::new(err)))?;
+
     let schema_contract_registry_txn = CreateContractRegistryActionBuilder::new()
         .with_name(String::from(&schema_contract.metadata.name))
-        .with_owners(vec![bytes_to_hex_str(signer.public_key())])
+        .with_owners(vec![public_key.clone()])
         .into_payload_builder()?
         .into_transaction_builder(signer)?
         .build(signer)?;
@@ -300,7 +341,7 @@ fn make_schema_txns(
         make_upload_contract_txn(signer, &schema_contract, GRID_SCHEMA_NAMESPACE)?;
     let schema_namespace_registry_txn = CreateNamespaceRegistryActionBuilder::new()
         .with_namespace(GRID_SCHEMA_NAMESPACE.into())
-        .with_owners(vec![bytes_to_hex_str(signer.public_key())])
+        .with_owners(vec![public_key])
         .into_payload_builder()?
         .into_transaction_builder(signer)?
         .build(signer)?;
@@ -337,27 +378,35 @@ fn make_schema_txns(
 fn make_purchase_order_txns(
     txns: &mut Vec<Transaction>,
     version: &str,
-    signer: &TransactSigner,
+    signer: &dyn Signer,
 ) -> Result<(), AppAuthHandlerError> {
     let purchase_order_contract = SmartContractArchive::from_scar_file(
         "grid-purchase-order",
         &version,
         &default_scar_path(),
     )?;
+
+    let public_key = signer
+        .public_key()
+        .map(|pk| pk.as_hex())
+        .map_err(|err| AppAuthHandlerError::from_source(Box::new(err)))?;
+
     let purchase_order_contract_registry_txn = CreateContractRegistryActionBuilder::new()
         .with_name(String::from(&purchase_order_contract.metadata.name))
-        .with_owners(vec![bytes_to_hex_str(signer.public_key())])
+        .with_owners(vec![public_key.clone()])
         .into_payload_builder()?
         .into_transaction_builder(signer)?
         .build(signer)?;
+
     let purchase_order_contract_txn = make_upload_contract_txn(
         signer,
         &purchase_order_contract,
         GRID_PURCHASE_ORDER_NAMESPACE,
     )?;
+
     let purchase_order_namespace_registry_txn = CreateNamespaceRegistryActionBuilder::new()
         .with_namespace(GRID_PURCHASE_ORDER_NAMESPACE.into())
-        .with_owners(vec![bytes_to_hex_str(signer.public_key())])
+        .with_owners(vec![public_key.clone()])
         .into_payload_builder()?
         .into_transaction_builder(signer)?
         .build(signer)?;
@@ -391,12 +440,6 @@ fn make_purchase_order_txns(
     Ok(())
 }
 
-fn new_signer(private_key: &str) -> Result<TransactSigner, AppAuthHandlerError> {
-    let context = create_context("secp256k1")?;
-    let private_key = Box::new(Secp256k1PrivateKey::from_hex(private_key)?);
-    Ok(SawtoothSigner::new_boxed(context, private_key).try_into()?)
-}
-
 #[cfg(feature = "pike")]
 fn make_upload_contract_txn(
     signer: &dyn Signer,
@@ -413,16 +456,4 @@ fn make_upload_contract_txn(
         .into_payload_builder()?
         .into_transaction_builder(signer)?
         .build(signer)?)
-}
-
-/// Returns a hex string representation of the supplied bytes
-///
-/// # Arguments
-///
-/// * `b` - input bytes
-fn bytes_to_hex_str(b: &[u8]) -> String {
-    b.iter()
-        .map(|b| format!("{:02x}", b))
-        .collect::<Vec<_>>()
-        .join("")
 }
