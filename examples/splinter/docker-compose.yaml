@@ -116,7 +116,7 @@ services:
       "
 
   generate-registry:
-    image: splintercommunity/splinter-cli:0.4
+    image: splintercommunity/splinter-cli:0.5.5
     volumes:
       - registry:/registry
     command: |
@@ -127,18 +127,19 @@ services:
           splinter admin keygen alpha -d /registry
           splinter admin keygen beta -d /registry
           splinter admin keygen gamma -d /registry
+
           # check if splinterd-alpha is available
-          while [[ $$(curl --write-out %{http_code} --silent --output /dev/null http://splinterd-alpha:8085/status) -ne 200 ]] ; do
+          while [[ $$(curl --write-out %{http_code} --silent --output /dev/null http://splinterd-alpha:8085/status) -ne 401 ]] ; do
              >&2 echo \"splinterd is unavailable - sleeping\"
              sleep 1
           done
           # check if splinterd-beta is available
-          while [[ $$(curl --write-out %{http_code} --silent --output /dev/null http://splinterd-beta:8085/status) -ne 200 ]] ; do
+          while [[ $$(curl --write-out %{http_code} --silent --output /dev/null http://splinterd-beta:8085/status) -ne 401 ]] ; do
              >&2 echo \"splinterd is unavailable - sleeping\"
              sleep 1
           done
           # check if splinterd-gamma is available
-          while [[ $$(curl --write-out %{http_code} --silent --output /dev/null http://splinterd-gamma:8085/status) -ne 200 ]] ; do
+          while [[ $$(curl --write-out %{http_code} --silent --output /dev/null http://splinterd-gamma:8085/status) -ne 401 ]] ; do
              >&2 echo \"splinterd is unavailable - sleeping\"
              sleep 1
           done
@@ -147,16 +148,19 @@ services:
             http://splinterd-alpha:8085 \
             --file /registry/registry.yaml \
             --key-file /registry/alpha.pub \
+            --key /registry/alpha.priv \
             --metadata organization='Alpha'
           splinter registry build \
             http://splinterd-beta:8085 \
             --file /registry/registry.yaml \
             --key-file /registry/beta.pub \
+            --key /registry/beta.priv \
             --metadata organization='Beta'
           splinter registry build \
             http://splinterd-gamma:8085 \
             --file /registry/registry.yaml \
             --key-file /registry/gamma.pub \
+            --key /registry/gamma.priv \
             --metadata organization='Gamma'
         fi
       "
@@ -223,7 +227,7 @@ services:
       "
 
   scabbard-cli-alpha:
-    image: splintercommunity/scabbard-cli:0.4
+    image: splintercommunity/scabbard-cli:0.5.5
     container_name: scabbard-cli-alpha
     hostname: scabbard-cli-alpha
     volumes:
@@ -231,7 +235,7 @@ services:
     command: tail -f /dev/null
 
   splinterd-alpha:
-    image: splintercommunity/splinterd:0.4
+    image: splintercommunity/splinterd:0.5.5
     container_name: splinterd-alpha
     hostname: splinterd-alpha
     expose:
@@ -351,7 +355,7 @@ services:
       "
 
   scabbard-cli-beta:
-    image: splintercommunity/scabbard-cli:0.4
+    image: splintercommunity/scabbard-cli:0.5.5
     container_name: scabbard-cli-beta
     hostname: scabbard-cli-beta
     volumes:
@@ -359,7 +363,7 @@ services:
     command: tail -f /dev/null
 
   splinterd-beta:
-    image: splintercommunity/splinterd:0.4
+    image: splintercommunity/splinterd:0.5.5
     container_name: splinterd-beta
     hostname: splinterd-beta
     expose:
@@ -478,7 +482,7 @@ services:
       "
 
   splinterd-gamma:
-    image: splintercommunity/splinterd:0.4
+    image: splintercommunity/splinterd:0.5.5
     container_name: splinterd-gamma
     hostname: splinterd-gamma
     expose:
