@@ -37,7 +37,7 @@ byteorder = "1"
 cfg-if = "0.1"
 clap = "2"
 ctrlc = "3.0"
-cylinder = "0.2"
+cylinder = { version = "0.2", features = ["jwt"] }
 diesel = { version = "1.0.0", features = ["r2d2", "serde_json"] }
 diesel_migrations = "1.4"
 flexi_logger = "0.14"
@@ -46,19 +46,19 @@ grid-sdk = { path = "../sdk", features = ["postgres", "sqlite", "experimental"] 
 log = "0.4"
 protobuf = "2.19"
 reqwest = { version = "0.10.1", optional = true, features = ["json", "blocking"] }
-sabre-sdk = { version = "0.5", optional = true }
-sawtooth-sdk = { version = "0.4", features = ["transact-compat"] }
-scabbard = { version = "0.4", optional = true, features = ["client", "events"] }
+sabre-sdk = { version = "0.7", optional = true }
+sawtooth-sdk = { version = "0.4" }
+scabbard = { version = "0.5", optional = true, features = ["client", "events", "reqwest"] }
 serde = { version = "1.0", optional = true, features = ["derive"] }
 serde_json = { version = "1.0", optional = true }
-transact = { version = "0.2", optional = true }
+transact = { version = "0.3", optional = true }
 url = "2.1"
 uuid = { version = "0.6", features = ["v4"] }
 
 [dependencies.splinter]
-version = "0.4"
+version = "0.5"
 optional = true
-features = [ "events" ]
+features = [ "events", "admin-service" ]
 
 [features]
 default = [
