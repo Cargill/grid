@@ -36,6 +36,7 @@ use sabre_sdk::protocol::payload::{
     CreateNamespaceRegistryActionBuilder, CreateNamespaceRegistryPermissionActionBuilder,
 };
 use scabbard::client::{ReqwestScabbardClientBuilder, ScabbardClient, ServiceId};
+use semver::Version;
 #[cfg(any(
     feature = "location",
     feature = "pike",
@@ -67,7 +68,9 @@ pub fn setup_grid(
         feature = "purchase-order",
         feature = "schema"
     ))]
-    let version = env!("CARGO_PKG_VERSION");
+    let version = Version::parse(env!("CARGO_PKG_VERSION"))
+        .map(|v| format!("^{}.{}, {}", v.major, v.minor, v))
+        .map_err(|err| AppAuthHandlerError::from_source(Box::new(err)))?;
 
     let context = Secp256k1Context::new();
     let private_key = PrivateKey::new_from_hex(&scabbard_admin_key)
