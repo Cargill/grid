@@ -19,13 +19,6 @@ extern crate log;
 
 mod actions;
 mod error;
-#[cfg(any(
-    feature = "location",
-    feature = "pike",
-    feature = "product",
-    feature = "schema",
-))]
-mod http;
 #[cfg(feature = "sawtooth")]
 mod sawtooth;
 #[cfg(any(
@@ -56,6 +49,8 @@ use std::{collections::HashMap, fs::File, io::prelude::*};
 #[cfg(any(feature = "pike", feature = "schema",))]
 use clap::ArgMatches;
 use flexi_logger::{DeferredNow, LogSpecBuilder, Logger};
+use grid_sdk::client::{schema, schema::SchemaClient, ClientFactory, HttpClientFactory};
+
 #[cfg(feature = "location")]
 use grid_sdk::protocol::location::payload::{
     LocationCreateActionBuilder, LocationDeleteActionBuilder, LocationNamespace,
@@ -1723,11 +1718,14 @@ fn run() -> Result<(), CliError> {
                 .or_else(|| env::var(GRID_DAEMON_ENDPOINT).ok())
                 .unwrap_or_else(|| String::from("http://localhost:8000"));
 
-            let service_id = m
+            let service_id_str = m
                 .value_of("service_id")
                 .map(String::from)
                 .or_else(|| env::var(GRID_SERVICE_ID).ok());
 
+            let service_id = service_id_str.as_deref();
+
+            let agent_client = HttpClientFactory::agent_client(url);
             match m.subcommand() {
                 ("create", Some(m)) => {
                     let key = m
@@ -1763,7 +1761,7 @@ fn run() -> Result<(), CliError> {
                         .map_err(|err| CliError::UserError(format!("{}", err)))?;
 
                     info!("Submitting request to create agent...");
-                    agents::do_create_agent(&url, signer, wait, create_agent, service_id)?;
+                    agents::do_create_agent(agent_client, signer, wait, create_agent, service_id)?;
                 }
                 ("update", Some(m)) => {
                     let key = m
@@ -1800,17 +1798,19 @@ fn run() -> Result<(), CliError> {
                         .map_err(|err| CliError::UserError(format!("{}", err)))?;
 
                     info!("Submitting request to update agent...");
-                    agents::do_update_agent(&url, signer, wait, update_agent, service_id)?;
+                    agents::do_update_agent(agent_client, signer, wait, update_agent, service_id)?;
                 }
                 ("list", Some(m)) => agents::do_list_agents(
-                    &url,
+                    agent_client,
                     service_id,
                     m.value_of("format").unwrap(),
                     m.is_present("line-per-role"),
                 )?,
-                ("show", Some(m)) => {
-                    agents::do_show_agents(&url, m.value_of("public_key").unwrap(), service_id)?
-                }
+                ("show", Some(m)) => agents::do_show_agents(
+                    agent_client,
+                    m.value_of("public_key").unwrap(),
+                    service_id,
+                )?,
                 _ => return Err(CliError::UserError("Subcommand not recognized".into())),
             }
         }
@@ -1822,11 +1822,14 @@ fn run() -> Result<(), CliError> {
                 .or_else(|| env::var(GRID_DAEMON_ENDPOINT).ok())
                 .unwrap_or_else(|| String::from("http://localhost:8000"));
 
-            let service_id = m
+            let service_id_str = m
                 .value_of("service_id")
                 .map(String::from)
                 .or_else(|| env::var(GRID_SERVICE_ID).ok());
 
+            let service_id = service_id_str.as_deref();
+
+            let organization_client = HttpClientFactory::organization_client(url);
             match m.subcommand() {
                 ("create", Some(m)) => {
                     let key = m
@@ -1846,7 +1849,13 @@ fn run() -> Result<(), CliError> {
                         .map_err(|err| CliError::UserError(format!("{}", err)))?;
 
                     info!("Submitting request to create organization...");
-                    orgs::do_create_organization(&url, signer, wait, create_org, service_id)?;
+                    orgs::do_create_organization(
+                        organization_client,
+                        signer,
+                        wait,
+                        create_org,
+                        service_id,
+                    )?;
                 }
                 ("update", Some(m)) => {
                     let key = m
@@ -1872,17 +1881,25 @@ fn run() -> Result<(), CliError> {
                         .map_err(|err| CliError::UserError(format!("{}", err)))?;
 
                     info!("Submitting request to update organization...");
-                    orgs::do_update_organization(&url, signer, wait, update_org, service_id)?;
+                    orgs::do_update_organization(
+                        organization_client,
+                        signer,
+                        wait,
+                        update_org,
+                        service_id,
+                    )?;
                 }
                 ("list", Some(m)) => orgs::do_list_organizations(
-                    &url,
+                    organization_client,
                     service_id,
                     m.value_of("format").unwrap(),
                     m.is_present("alternate_ids"),
                 )?,
-                ("show", Some(m)) => {
-                    orgs::do_show_organization(&url, service_id, m.value_of("org_id").unwrap())?
-                }
+                ("show", Some(m)) => orgs::do_show_organization(
+                    organization_client,
+                    service_id,
+                    m.value_of("org_id").unwrap(),
+                )?,
                 _ => return Err(CliError::UserError("Subcommand not recognized".into())),
             }
         }
@@ -1894,11 +1911,14 @@ fn run() -> Result<(), CliError> {
                 .or_else(|| env::var(GRID_DAEMON_ENDPOINT).ok())
                 .unwrap_or_else(|| String::from("http://localhost:8000"));
 
-            let service_id = m
+            let service_id_str = m
                 .value_of("service_id")
                 .map(String::from)
                 .or_else(|| env::var(GRID_SERVICE_ID).ok());
 
+            let service_id = service_id_str.as_deref();
+
+            let role_client = HttpClientFactory::role_client(url);
             match m.subcommand() {
                 ("create", Some(m)) => {
                     let key = m
@@ -1942,7 +1962,7 @@ fn run() -> Result<(), CliError> {
                         .map_err(|err| CliError::UserError(format!("{}", err)))?;
 
                     info!("Submitting request to create role...");
-                    roles::do_create_role(&url, signer, wait, create_role, service_id)?;
+                    roles::do_create_role(role_client, signer, wait, create_role, service_id)?;
                 }
                 ("update", Some(m)) => {
                     let key = m
@@ -1986,7 +2006,7 @@ fn run() -> Result<(), CliError> {
                         .map_err(|err| CliError::UserError(format!("{}", err)))?;
 
                     info!("Submitting request to update role...");
-                    roles::do_update_role(&url, signer, wait, update_role, service_id)?;
+                    roles::do_update_role(role_client, signer, wait, update_role, service_id)?;
                 }
                 ("delete", Some(m)) => {
                     let key = m
@@ -2004,17 +2024,19 @@ fn run() -> Result<(), CliError> {
                         .map_err(|err| CliError::UserError(format!("{}", err)))?;
 
                     info!("Submitting request to delete role...");
-                    roles::do_delete_role(&url, signer, wait, delete_role, service_id)?;
+                    roles::do_delete_role(role_client, signer, wait, delete_role, service_id)?;
                 }
                 ("show", Some(m)) => roles::do_show_role(
-                    &url,
-                    m.value_of("org_id").unwrap(),
-                    m.value_of("name").unwrap(),
+                    role_client,
+                    m.value_of("org_id").unwrap().into(),
+                    m.value_of("name").unwrap().into(),
                     service_id,
                 )?,
-                ("list", Some(m)) => {
-                    roles::do_list_roles(&url, m.value_of("org_id").unwrap(), service_id)?
-                }
+                ("list", Some(m)) => roles::do_list_roles(
+                    role_client,
+                    m.value_of("org_id").unwrap().into(),
+                    service_id,
+                )?,
                 _ => return Err(CliError::UserError("Subcommand not recognized".into())),
             }
         }
@@ -2026,11 +2048,14 @@ fn run() -> Result<(), CliError> {
                 .or_else(|| env::var(GRID_DAEMON_ENDPOINT).ok())
                 .unwrap_or_else(|| String::from("http://localhost:8000"));
 
-            let service_id = m
+            let service_id_str = m
                 .value_of("service_id")
                 .map(String::from)
                 .or_else(|| env::var(GRID_SERVICE_ID).ok());
 
+            let service_id = service_id_str.as_deref();
+
+            let schema_client = HttpClientFactory::schema_client(url);
             match m.subcommand() {
                 ("create", Some(m)) => {
                     let key = m
@@ -2043,7 +2068,7 @@ fn run() -> Result<(), CliError> {
 
                     info!("Submitting request to create schema...");
                     schemas::do_create_schemas(
-                        &url,
+                        schema_client,
                         signer,
                         wait,
                         m.value_of("path").unwrap(),
@@ -2061,17 +2086,19 @@ fn run() -> Result<(), CliError> {
 
                     info!("Submitting request to update schema...");
                     schemas::do_update_schemas(
-                        &url,
+                        schema_client,
                         signer,
                         wait,
                         m.value_of("path").unwrap(),
                         service_id,
                     )?;
                 }
-                ("list", Some(_)) => schemas::do_list_schemas(&url, service_id)?,
-                ("show", Some(m)) => {
-                    schemas::do_show_schema(&url, m.value_of("name").unwrap(), service_id)?
-                }
+                ("list", Some(_)) => schemas::do_list_schemas(schema_client, service_id)?,
+                ("show", Some(m)) => schemas::do_show_schema(
+                    schema_client,
+                    m.value_of("name").unwrap().into(),
+                    service_id,
+                )?,
                 _ => return Err(CliError::UserError("Subcommand not recognized".into())),
             }
         }
@@ -2120,11 +2147,15 @@ fn run() -> Result<(), CliError> {
                 .or_else(|| env::var(GRID_DAEMON_ENDPOINT).ok())
                 .unwrap_or_else(|| String::from("http://localhost:8000"));
 
-            let service_id = m
+            let service_id_str = m
                 .value_of("service_id")
                 .map(String::from)
                 .or_else(|| env::var(GRID_SERVICE_ID).ok());
 
+            let service_id = service_id_str.as_deref();
+
+            let product_client = HttpClientFactory::product_client(url.to_string());
+            let schema_client = HttpClientFactory::schema_client(url.to_string());
             match m.subcommand() {
                 ("create", Some(m)) if m.is_present("file") => {
                     let key = m
@@ -2137,13 +2168,19 @@ fn run() -> Result<(), CliError> {
 
                     let actions = products::create_product_payloads_from_file(
                         m.values_of("file").unwrap().collect(),
-                        &url,
+                        schema_client,
                         service_id.as_deref(),
                         m.value_of("owner"),
                     )?;
 
                     info!("Submitting request to create product...");
-                    products::do_create_products(&url, signer, wait, actions, service_id)?;
+                    products::do_create_products(
+                        product_client,
+                        signer,
+                        wait,
+                        actions,
+                        service_id,
+                    )?;
                 }
                 ("create", Some(m)) => {
                     let key = m
@@ -2165,9 +2202,9 @@ fn run() -> Result<(), CliError> {
                     };
 
                     let properties = parse_properties(
-                        &url,
+                        schema_client,
                         m.value_of("product_namespace").unwrap_or("gs1_product"),
-                        service_id.as_deref(),
+                        service_id,
                         &m,
                     )?;
 
@@ -2180,7 +2217,13 @@ fn run() -> Result<(), CliError> {
                         .map_err(|err| CliError::UserError(format!("{}", err)))?;
 
                     info!("Submitting request to create product...");
-                    products::do_create_products(&url, signer, wait, vec![action], service_id)?;
+                    products::do_create_products(
+                        product_client,
+                        signer,
+                        wait,
+                        vec![action],
+                        service_id,
+                    )?;
                 }
                 ("update", Some(m)) if m.is_present("file") => {
                     let key = m
@@ -2193,12 +2236,18 @@ fn run() -> Result<(), CliError> {
 
                     let actions = products::update_product_payloads_from_file(
                         m.values_of("file").unwrap().collect(),
-                        &url,
+                        schema_client,
                         service_id.as_deref(),
                     )?;
 
                     info!("Submitting request to update product...");
-                    products::do_update_products(&url, signer, wait, actions, service_id)?;
+                    products::do_update_products(
+                        product_client,
+                        signer,
+                        wait,
+                        actions,
+                        service_id,
+                    )?;
                 }
                 ("update", Some(m)) => {
                     let key = m
@@ -2220,9 +2269,9 @@ fn run() -> Result<(), CliError> {
                     };
 
                     let properties = parse_properties(
-                        &url,
+                        schema_client,
                         m.value_of("product_namespace").unwrap_or("gs1_product"),
-                        service_id.as_deref(),
+                        service_id,
                         &m,
                     )?;
 
@@ -2234,7 +2283,13 @@ fn run() -> Result<(), CliError> {
                         .map_err(|err| CliError::UserError(format!("{}", err)))?;
 
                     info!("Submitting request to update product...");
-                    products::do_update_products(&url, signer, wait, vec![action], service_id)?;
+                    products::do_update_products(
+                        product_client,
+                        signer,
+                        wait,
+                        vec![action],
+                        service_id,
+                    )?;
                 }
                 ("delete", Some(m)) => {
                     let key = m
@@ -2262,12 +2317,14 @@ fn run() -> Result<(), CliError> {
                         .map_err(|err| CliError::UserError(format!("{}", err)))?;
 
                     info!("Submitting request to delete product...");
-                    products::do_delete_products(&url, signer, wait, action, service_id)?;
+                    products::do_delete_products(product_client, signer, wait, action, service_id)?;
                 }
-                ("list", Some(_)) => products::do_list_products(&url, service_id)?,
-                ("show", Some(m)) => {
-                    products::do_show_products(&url, m.value_of("product_id").unwrap(), service_id)?
-                }
+                ("list", Some(_)) => products::do_list_products(product_client, service_id)?,
+                ("show", Some(m)) => products::do_show_products(
+                    product_client,
+                    m.value_of("product_id").unwrap().into(),
+                    service_id,
+                )?,
                 _ => return Err(CliError::UserError("Subcommand not recognized".into())),
             }
         }
@@ -2279,11 +2336,15 @@ fn run() -> Result<(), CliError> {
                 .or_else(|| env::var(GRID_DAEMON_ENDPOINT).ok())
                 .unwrap_or_else(|| String::from("http://localhost:8000"));
 
-            let service_id = m
+            let service_id_str = m
                 .value_of("service_id")
                 .map(String::from)
                 .or_else(|| env::var(GRID_SERVICE_ID).ok());
 
+            let service_id = service_id_str.as_deref();
+
+            let location_client = HttpClientFactory::location_client(url.to_string());
+            let schema_client = HttpClientFactory::schema_client(url.to_string());
             match m.subcommand() {
                 ("create", Some(m)) if m.is_present("file") => {
                     let key = m
@@ -2296,17 +2357,17 @@ fn run() -> Result<(), CliError> {
 
                     let actions = locations::create_location_payloads_from_file(
                         m.value_of("file").unwrap(),
-                        &url,
+                        schema_client,
                         service_id.as_deref(),
                     )?;
 
                     info!("Submitting request to create location...");
                     locations::do_create_location(
-                        &url,
+                        location_client,
                         signer,
                         wait,
                         actions,
-                        service_id.as_deref(),
+                        service_id,
                     )?;
                 }
                 ("create", Some(m)) => {
@@ -2329,9 +2390,9 @@ fn run() -> Result<(), CliError> {
                     };
 
                     let properties = parse_properties(
-                        &url,
+                        schema_client,
                         m.value_of("location_namespace").unwrap_or("gs1_location"),
-                        service_id.as_deref(),
+                        service_id,
                         &m,
                     )?;
 
@@ -2345,11 +2406,11 @@ fn run() -> Result<(), CliError> {
 
                     info!("Submitting request to create location...");
                     locations::do_create_location(
-                        &url,
+                        location_client,
                         signer,
                         wait,
                         vec![action],
-                        service_id.as_deref(),
+                        service_id,
                     )?;
                 }
                 ("update", Some(m)) if m.is_present("file") => {
@@ -2363,17 +2424,17 @@ fn run() -> Result<(), CliError> {
 
                     let actions = locations::update_location_payloads_from_file(
                         m.value_of("file").unwrap(),
-                        &url,
+                        schema_client,
                         service_id.as_deref(),
                     )?;
 
                     info!("Submitting request to update location...");
                     locations::do_update_location(
-                        &url,
+                        location_client,
                         signer,
                         wait,
                         actions,
-                        service_id.as_deref(),
+                        service_id,
                     )?;
                 }
                 ("update", Some(m)) => {
@@ -2396,9 +2457,9 @@ fn run() -> Result<(), CliError> {
                     };
 
                     let properties = parse_properties(
-                        &url,
+                        schema_client,
                         m.value_of("location_namespace").unwrap_or("gs1_location"),
-                        service_id.as_deref(),
+                        service_id,
                         &m,
                     )?;
 
@@ -2411,11 +2472,11 @@ fn run() -> Result<(), CliError> {
 
                     info!("Submitting request to update location...");
                     locations::do_update_location(
-                        &url,
+                        location_client,
                         signer,
                         wait,
                         vec![action],
-                        service_id.as_deref(),
+                        service_id,
                     )?;
                 }
                 ("delete", Some(m)) => {
@@ -2445,18 +2506,20 @@ fn run() -> Result<(), CliError> {
 
                     info!("Submitting request to delete location...");
                     locations::do_delete_location(
-                        &url,
+                        location_client,
                         signer,
                         wait,
                         action,
-                        service_id.as_deref(),
+                        service_id,
                     )?;
                 }
-                ("list", Some(_)) => locations::do_list_locations(&url, service_id.as_deref())?,
+                ("list", Some(_)) => {
+                    locations::do_list_locations(location_client, service_id.as_deref())?
+                }
                 ("show", Some(_)) => locations::do_show_location(
-                    &url,
+                    location_client,
                     m.value_of("location_id").unwrap(),
-                    service_id.as_deref(),
+                    service_id,
                 )?,
                 _ => return Err(CliError::UserError("Subcommand not recognized".into())),
             }
@@ -2567,7 +2630,7 @@ fn parse_metadata(matches: &ArgMatches) -> Result<Vec<KeyValueEntry>, CliError> 
 
 #[cfg(any(feature = "location", feature = "product",))]
 fn parse_properties(
-    url: &str,
+    client: Box<dyn SchemaClient>,
     namespace: &str,
     service_id: Option<&str>,
     matches: &ArgMatches,
@@ -2590,7 +2653,7 @@ fn parse_properties(
             Ok(acc)
         })?;
 
-    let schemas = schemas::get_schema(url, namespace, service_id)?;
+    let schemas = client.get_schema(String::from(namespace), service_id)?;
 
     let mut property_values = Vec::new();
 
@@ -2607,7 +2670,7 @@ fn parse_properties(
         };
 
         match property.data_type {
-            schemas::DataType::Number => {
+            schema::DataType::Number => {
                 let number = if let Ok(i) = value.parse::<i64>() {
                     i
                 } else {
@@ -2623,7 +2686,7 @@ fn parse_properties(
 
                 property_values.push(property_value);
             }
-            schemas::DataType::Enum => {
+            schema::DataType::Enum => {
                 let enum_idx = if let Ok(i) = value.parse::<u32>() {
                     i
                 } else {
@@ -2639,7 +2702,7 @@ fn parse_properties(
 
                 property_values.push(property_value);
             }
-            schemas::DataType::String => {
+            schema::DataType::String => {
                 let property_value = PropertyValueBuilder::new()
                     .with_name(property.name)
                     .with_data_type(property.data_type.into())
@@ -2649,7 +2712,7 @@ fn parse_properties(
 
                 property_values.push(property_value);
             }
-            schemas::DataType::LatLong => {
+            schema::DataType::LatLong => {
                 let lat_long = value
                     .split(',')
                     .map(|x| {
@@ -2679,7 +2742,7 @@ fn parse_properties(
 
                 property_values.push(property_value);
             }
-            schemas::DataType::Boolean => {
+            schema::DataType::Boolean => {
                 let boolean = if let Ok(i) = value.parse::<bool>() {
                     i
                 } else {
@@ -2695,7 +2758,7 @@ fn parse_properties(
 
                 property_values.push(property_value);
             }
-            schemas::DataType::Bytes => {
+            schema::DataType::Bytes => {
                 let mut f = File::open(&value)?;
                 let mut buffer = Vec::new();
                 f.read_to_end(&mut buffer)?;
@@ -2709,7 +2772,7 @@ fn parse_properties(
 
                 property_values.push(property_value);
             }
-            schemas::DataType::Struct => {
+            schema::DataType::Struct => {
                 return Err(CliError::UserError(
                     "Structs cannot be added via command line, use --file option".into(),
                 ))

@@ -128,6 +128,12 @@ impl InternalError {
     }
 }
 
+impl From<reqwest::Error> for InternalError {
+    fn from(err: reqwest::Error) -> Self {
+        InternalError::with_message(format!("{}", err))
+    }
+}
+
 impl error::Error for InternalError {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         self.source.as_ref().map(|s| s.source.as_ref())

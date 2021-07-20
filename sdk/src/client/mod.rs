@@ -14,14 +14,20 @@
 
 //! Traits and implementations useful for interacting with the REST API.
 
-#[cfg(feature = "client-reqwest")]
-mod reqwest;
+// #[cfg(feature = "client-reqwest")]
+pub mod agent;
+pub mod location;
+pub mod organization;
+pub mod product;
+pub mod purchase_order;
+pub mod reqwest;
+pub mod role;
+pub mod schema;
 
+use crate::error::ClientError;
 use sawtooth_sdk::messages::batch::BatchList;
-use serde::{Deserialize, Serialize};
-use std::time::SystemTime;
 
-use crate::error::InternalError;
+use self::reqwest::ReqwestClient;
 
 pub trait Client {
     /// Submits a list of batches
@@ -31,117 +37,69 @@ pub trait Client {
     /// * `batches` - The `BatchList` to be submitted
     fn post_batches(
         &self,
+        wait: u64,
         batch_list: &BatchList,
         service_id: Option<&str>,
-        wait: u64,
-    ) -> Result<(), InternalError>;
-
-    /// Retrieves the purchase order with the specified `id`.
-    ///
-    /// # Arguments
-    ///
-    /// * `id` - The uuid of the `PurchaseOrder` to be retrieved
-    #[cfg(feature = "purchase-order")]
-    fn get_purchase_order(&self, id: String) -> Result<Option<PurchaseOrder>, InternalError>;
-
-    /// Retrieves the purchase order version with the given `version_id` of the purchase
-    /// order with the given `id`
-    ///
-    /// # Arguments
-    ///
-    /// * `id` - The uuid of the `PurchaseOrder` containing the `PurchaseOrderVersion` to be retrieved
-    /// * `version_id` - The version id of the `PurchaseOrderVersion` to be retrieved
-    #[cfg(feature = "purchase-order")]
-    fn get_purchase_order_version(
-        &self,
-        id: String,
-        version_id: String,
-    ) -> Result<Option<PurchaseOrderVersion>, InternalError>;
-
-    /// Retrieves the purchase order revision with the given `revision_id` of
-    /// the purchase order version with the given `version_id` of the purchase order with the given `id`
-    ///
-    /// # Arguments
-    ///
-    /// * `id` - The uuid of the `PurchaseOrder` containing the `PurchaseOrderRevision` to be retrieved
-    /// * `version_id` - The version id of the `PurchaseOrderVersion` containing the
-    ///   `PurchaseOrderRevision` to be retrieved
-    /// * `revision_id` - The revision number of the `PurchaseOrderRevision` to be retrieved
-    #[cfg(feature = "purchase-order")]
-    fn get_purchase_order_revision(
-        &self,
-        id: String,
-        version_id: String,
-        revision_id: String,
-    ) -> Result<Option<PurchaseOrderRevision>, InternalError>;
-
-    /// lists purchase orders.
-    ///
-    /// # Arguments
-    ///
-    /// * `filter` - Filter to apply to the list of `PurchaseOrder`s
-    #[cfg(feature = "purchase-order")]
-    fn list_purchase_orders(
-        &self,
-        filter: Option<&str>,
-    ) -> Result<Vec<PurchaseOrder>, InternalError>;
-
-    /// lists the purchase order versions of a specific purchase order.
-    ///
-    /// # Arguments
-    ///
-    /// * `id` - The uuid of the `PurchaseOrder` containing the `PurchaseOrderVersion`s to be listed
-    /// * `filter` - Filter to apply to the list of purchase orders
-    #[cfg(feature = "purchase-order")]
-    fn list_purchase_order_versions(
-        &self,
-        id: String,
-        filter: Option<&str>,
-    ) -> Result<Vec<PurchaseOrderVersion>, InternalError>;
-
-    /// lists the purchase order revisions of a specific purchase order version.
-    ///
-    /// # Arguments
-    ///
-    /// * `id` - The uuid of the `PurchaseOrder` containing the `PurchaseOrderRevision`s to be listed
-    /// * `version_id` - The version id of the `PurchaseOrderVersion` containing
-    ///   the `PurchaseOrderRevision`s to be listed
-    #[cfg(feature = "purchase-order")]
-    fn list_purchase_order_revisions(
-        &self,
-        id: String,
-        version_id: String,
-        filter: Option<&str>,
-    ) -> Result<Vec<PurchaseOrderRevision>, InternalError>;
+    ) -> Result<(), ClientError>;
 }
 
-#[cfg(feature = "purchase-order")]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PurchaseOrder {
-    org_id: String,
-    uuid: String,
-    workflow_status: String,
-    is_closed: bool,
-    accepted_version_id: Option<String>,
-    versions: Vec<PurchaseOrderVersion>,
-    created_at: SystemTime,
+//TODO: add a factory here
+// look at splinter's database code (store, traits, storeFactory)
+
+pub trait ClientFactory {
+    /// Retrieves a client for listing and showing agents
+    fn agent_client(url: String) -> Box<dyn agent::AgentClient>;
+
+    /// Retrieves a client for listing and showing schemas
+    fn schema_client(url: String) -> Box<dyn schema::SchemaClient>;
+
+    /// Retrieves a client for listing and showing roles
+    fn role_client(url: String) -> Box<dyn role::RoleClient>;
+
+    /// Retrieves a client for listing and showing organizations
+    fn organization_client(url: String) -> Box<dyn organization::OrganizationClient>;
+
+    /// Retrieves a client for listing and showing locations
+    fn location_client(url: String) -> Box<dyn location::LocationClient>;
+
+    /// Retrieves a client for listing and showing products
+    fn product_client(url: String) -> Box<dyn product::ProductClient>;
+
+    /// Retrieves a client for listing and showing
+    /// purchase orders, revisions, and versions
+    #[cfg(feature = "purchase-order")]
+    fn purchase_order_client(url: String) -> Box<dyn purchase_order::PurchaseOrderClient>;
 }
 
-#[cfg(feature = "purchase-order")]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PurchaseOrderVersion {
-    version_id: String,
-    workflow_status: String,
-    is_draft: bool,
-    current_revision_id: u64,
-    revisions: Vec<PurchaseOrderRevision>,
-}
+pub struct HttpClientFactory {}
 
-#[cfg(feature = "purchase-order")]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PurchaseOrderRevision {
-    revision_id: u64,
-    order_xml_v3_4: String,
-    submitter: String,
-    created_at: u64,
+impl ClientFactory for HttpClientFactory {
+    fn agent_client(url: String) -> Box<dyn agent::AgentClient> {
+        Box::new(ReqwestClient::new(url))
+    }
+
+    fn schema_client(url: String) -> Box<dyn schema::SchemaClient> {
+        Box::new(ReqwestClient::new(url))
+    }
+
+    fn role_client(url: String) -> Box<dyn role::RoleClient> {
+        Box::new(ReqwestClient::new(url))
+    }
+
+    fn organization_client(url: String) -> Box<dyn organization::OrganizationClient> {
+        Box::new(ReqwestClient::new(url))
+    }
+
+    fn location_client(url: String) -> Box<dyn location::LocationClient> {
+        Box::new(ReqwestClient::new(url))
+    }
+
+    fn product_client(url: String) -> Box<dyn product::ProductClient> {
+        Box::new(ReqwestClient::new(url))
+    }
+
+    #[cfg(feature = "purchase-order")]
+    fn purchase_order_client(url: String) -> Box<dyn purchase_order::PurchaseOrderClient> {
+        Box::new(ReqwestClient::new(url))
+    }
 }

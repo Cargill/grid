@@ -42,7 +42,6 @@ grid-sdk = { path = "../sdk", features = ["postgres", "sqlite", "pike", "schema"
 rust-crypto = "0.2"
 protobuf = "2.19"
 users = "0.11"
-reqwest = "0.9"
 dirs = "3"
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.8"

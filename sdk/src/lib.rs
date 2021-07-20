@@ -37,7 +37,7 @@ pub mod backend;
 pub mod batch_processor;
 #[cfg(feature = "batch-store")]
 pub mod batches;
-#[cfg(feature = "client")]
+// TODO: #[cfg(feature = "client")]
 pub mod client;
 pub mod commits;
 pub mod error;
