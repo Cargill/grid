@@ -15,11 +15,18 @@
 use std::pin::Pin;
 use std::time::Duration;
 
+#[cfg(feature = "cylinder-jwt-support")]
+use cylinder::Signer;
 use futures::prelude::*;
+#[cfg(not(feature = "cylinder-jwt-support"))]
 use sawtooth_sdk::messages::batch::Batch;
 use sawtooth_sdk::messages::client_batch_submit::{
     ClientBatchStatusRequest, ClientBatchStatusResponse, ClientBatchStatusResponse_Status,
-    ClientBatchSubmitRequest, ClientBatchSubmitResponse, ClientBatchSubmitResponse_Status,
+    ClientBatchSubmitResponse_Status,
+};
+#[cfg(not(feature = "cylinder-jwt-support"))]
+use sawtooth_sdk::messages::client_batch_submit::{
+    ClientBatchSubmitRequest, ClientBatchSubmitResponse,
 };
 use sawtooth_sdk::messages::validator::Message_MessageType;
 use sawtooth_sdk::messaging::stream::MessageSender;
@@ -52,6 +59,7 @@ macro_rules! try_fut {
 }
 
 impl BackendClient for SawtoothBackendClient {
+    #[cfg(not(feature = "cylinder-jwt-support"))]
     fn submit_batches(
         &self,
         msg: SubmitBatches,
@@ -86,6 +94,15 @@ impl BackendClient for SawtoothBackendClient {
             }),
         )
         .boxed()
+    }
+
+    #[cfg(feature = "cylinder-jwt-support")]
+    fn submit_batches(
+        &self,
+        _msg: SubmitBatches,
+        _signer: Box<dyn Signer>,
+    ) -> Pin<Box<dyn Future<Output = Result<BatchStatusLink, BackendClientError>> + Send>> {
+        unimplemented!();
     }
 
     fn batch_status(

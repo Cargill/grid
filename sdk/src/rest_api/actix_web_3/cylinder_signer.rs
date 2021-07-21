@@ -12,25 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod backend_state;
-#[cfg(feature = "cylinder-jwt-support")]
-mod cylinder_signer;
-mod endpoint;
-mod key_state;
-mod paging;
-pub mod routes;
-#[cfg(feature = "rest-api-actix-web-3-run")]
-mod run;
-mod service;
-mod store_state;
+use cylinder::Signer;
 
-pub use backend_state::BackendState;
-#[cfg(feature = "cylinder-jwt-support")]
-pub use cylinder_signer::CylinderSigner;
-pub use endpoint::{Backend, Endpoint};
-pub use key_state::KeyState;
-pub use paging::QueryPaging;
-#[cfg(feature = "rest-api-actix-web-3-run")]
-pub use run::run;
-pub use service::{AcceptServiceIdParam, QueryServiceId};
-pub use store_state::StoreState;
+#[derive(Clone)]
+pub struct CylinderSigner {
+    pub signer: Box<dyn Signer>,
+}
+
+impl CylinderSigner {
+    pub fn new(signer: Box<dyn Signer>) -> Self {
+        Self {
+            signer: signer.clone(),
+        }
+    }
+}

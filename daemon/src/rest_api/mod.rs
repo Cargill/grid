@@ -23,6 +23,8 @@ pub use crate::rest_api::error::RestApiServerError;
 use actix_web::web;
 use actix_web::{dev, App, HttpServer, Result};
 use futures::executor::block_on;
+#[cfg(feature = "cylinder-jwt-support")]
+use grid_sdk::rest_api::actix_web_3::CylinderSigner;
 #[cfg(feature = "integration")]
 use grid_sdk::rest_api::actix_web_3::KeyState;
 use grid_sdk::rest_api::actix_web_3::{routes, BackendState, Endpoint, StoreState};
@@ -43,6 +45,7 @@ pub fn run(
     backend_state: BackendState,
     #[cfg(feature = "integration")] key_state: KeyState,
     endpoint: Endpoint,
+    #[cfg(feature = "cylinder-jwt-support")] signer: CylinderSigner,
 ) -> Result<
     (
         RestApiShutdownHandle,
@@ -67,6 +70,11 @@ pub fn run(
                     .app_data(endpoint.clone())
                     .service(routes::submit_batches)
                     .service(routes::get_batch_statuses);
+
+                #[cfg(feature = "cylinder-jwt-support")]
+                {
+                    app = app.data(signer.clone());
+                }
 
                 #[cfg(feature = "pike")]
                 {
@@ -158,6 +166,8 @@ mod test {
         test::{start, TestServer},
         App,
     };
+    #[cfg(feature = "cylinder-jwt-support")]
+    use cylinder::Signer;
     use diesel::r2d2::{ConnectionManager, Pool};
     use diesel::SqliteConnection;
     use futures::prelude::*;
@@ -236,7 +246,9 @@ mod test {
         ClientBatchStatusResponseOK,
         ClientBatchStatusResponseInvalidId,
         ClientBatchStatusResponseInternalError,
+        #[cfg(not(feature = "cylinder-jwt-support"))]
         ClientBatchSubmitResponseOK,
+        #[cfg(not(feature = "cylinder-jwt-support"))]
         ClientBatchSubmitResponseInvalidBatch,
         ClientBatchSubmitResponseInternalError,
     }
@@ -261,9 +273,52 @@ mod test {
     }
 
     impl BackendClient for MockBackendClient {
+        #[cfg(not(feature = "cylinder-jwt-support"))]
         fn submit_batches(
             &self,
             msg: SubmitBatches,
+        ) -> Pin<Box<dyn Future<Output = Result<BatchStatusLink, BackendClientError>> + Send>>
+        {
+            let mut client_submit_request = ClientBatchSubmitRequest::new();
+            client_submit_request.set_batches(protobuf::RepeatedField::from_vec(
+                msg.batch_list.get_batches().to_vec(),
+            ));
+
+            let response_status: ClientBatchSubmitResponse = try_fut!(query_validator(
+                &self.sender,
+                Message_MessageType::CLIENT_BATCH_SUBMIT_REQUEST,
+                &client_submit_request,
+            ));
+
+            future::ready(
+                match process_validator_response(response_status.get_status()) {
+                    Ok(_) => {
+                        let batch_query = msg
+                            .batch_list
+                            .get_batches()
+                            .iter()
+                            .map(Batch::get_header_signature)
+                            .collect::<Vec<_>>()
+                            .join(",");
+
+                        let mut response_url = msg.response_url.clone();
+                        response_url.set_query(Some(&format!("id={}", batch_query)));
+
+                        Ok(BatchStatusLink {
+                            link: response_url.to_string(),
+                        })
+                    }
+                    Err(err) => Err(err),
+                },
+            )
+            .boxed()
+        }
+
+        #[cfg(feature = "cylinder-jwt-support")]
+        fn submit_batches(
+            &self,
+            msg: SubmitBatches,
+            _signer: Box<dyn Signer>,
         ) -> Pin<Box<dyn Future<Output = Result<BatchStatusLink, BackendClientError>> + Send>>
         {
             let mut client_submit_request = ClientBatchSubmitRequest::new();
@@ -358,9 +413,11 @@ mod test {
                 }
                 ResponseType::ClientBatchStatusResponseInternalError => mock_validator_response
                     .set_content(get_batch_statuses_response_validator_internal_error()),
+                #[cfg(not(feature = "cylinder-jwt-support"))]
                 ResponseType::ClientBatchSubmitResponseOK => mock_validator_response.set_content(
                     get_submit_batches_response(ClientBatchSubmitResponse_Status::OK),
                 ),
+                #[cfg(not(feature = "cylinder-jwt-support"))]
                 ResponseType::ClientBatchSubmitResponseInvalidBatch => mock_validator_response
                     .set_content(get_submit_batches_response(
                         ClientBatchSubmitResponse_Status::INVALID_BATCH,
@@ -636,6 +693,8 @@ mod test {
     ///    It should send back a JSON response with:
     ///        - a link property that ends in '/batch_statuses?id=BATCH_ID_1'
     ///
+    // won't work with experimental features
+    #[cfg(not(feature = "cylinder-jwt-support"))]
     #[actix_rt::test]
     async fn test_post_batches_ok() {
         let (srv, _pool) =
@@ -665,6 +724,8 @@ mod test {
     ///    It will receive a Protobuf response with status INVALID_BATCH
     ///    It should send back a response with BadRequest status
     ///
+    // won't work with experimental features
+    #[cfg(not(feature = "cylinder-jwt-support"))]
     #[actix_rt::test]
     async fn test_post_batches_invalid_batch() {
         let (srv, _pool) = setup_test_server(

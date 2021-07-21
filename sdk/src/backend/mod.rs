@@ -20,6 +20,8 @@ mod splinter;
 
 use std::pin::Pin;
 
+#[cfg(all(feature = "backend-splinter", feature = "cylinder-jwt-support"))]
+use cylinder::Signer;
 use futures::prelude::*;
 use sawtooth_sdk::messages::batch::BatchList;
 use sawtooth_sdk::messages::client_batch_submit::ClientBatchStatus;
@@ -34,9 +36,17 @@ pub use splinter::SplinterBackendClient;
 pub const DEFAULT_TIME_OUT: u32 = 300; // Max timeout 300 seconds == 5 minutes
 
 pub trait BackendClient: Send + Sync + 'static {
+    #[cfg(not(feature = "cylinder-jwt-support"))]
     fn submit_batches(
         &self,
         submit_batches: SubmitBatches,
+    ) -> Pin<Box<dyn Future<Output = Result<BatchStatusLink, BackendClientError>> + Send>>;
+
+    #[cfg(feature = "cylinder-jwt-support")]
+    fn submit_batches(
+        &self,
+        submit_batches: SubmitBatches,
+        signer: Box<dyn Signer>,
     ) -> Pin<Box<dyn Future<Output = Result<BatchStatusLink, BackendClientError>> + Send>>;
 
     fn batch_status(

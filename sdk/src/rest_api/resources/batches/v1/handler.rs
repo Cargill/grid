@@ -14,6 +14,8 @@
 
 use std::sync::Arc;
 
+#[cfg(feature = "cylinder-jwt-support")]
+use cylinder::Signer;
 use sawtooth_sdk::messages::batch::BatchList;
 use url::Url;
 
@@ -29,6 +31,7 @@ pub async fn submit_batches(
     backend_client: Arc<dyn BackendClient>,
     bytes: &[u8],
     service_id: Option<String>,
+    #[cfg(feature = "cylinder-jwt-support")] signer: Box<dyn Signer>,
 ) -> Result<BatchStatusLink, ErrorResponse> {
     let batch_list: BatchList = match protobuf::Message::parse_from_bytes(bytes) {
         Ok(batch_list) => batch_list,
@@ -41,11 +44,15 @@ pub async fn submit_batches(
     };
 
     backend_client
-        .submit_batches(SubmitBatches {
-            batch_list,
-            response_url,
-            service_id,
-        })
+        .submit_batches(
+            SubmitBatches {
+                batch_list,
+                response_url,
+                service_id,
+            },
+            #[cfg(feature = "cylinder-jwt-support")]
+            signer,
+        )
         .await
         .map_err(|err| match err {
             BackendClientError::BadRequestError(ref msg) => ErrorResponse::new(400, msg),

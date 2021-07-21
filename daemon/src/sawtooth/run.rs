@@ -16,13 +16,19 @@
  * -----------------------------------------------------------------------------
  */
 
+#[cfg(feature = "cylinder-jwt-support")]
+use std::path::PathBuf;
 use std::process;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
 
+#[cfg(feature = "cylinder-jwt-support")]
+use cylinder::{load_key, secp256k1::Secp256k1Context, Context};
 use grid_sdk::backend::SawtoothBackendClient;
+#[cfg(feature = "cylinder-jwt-support")]
+use grid_sdk::rest_api::actix_web_3::CylinderSigner;
 #[cfg(feature = "rest-api")]
 use grid_sdk::rest_api::actix_web_3::Endpoint;
 #[cfg(feature = "integration")]
@@ -107,6 +113,15 @@ pub fn run_sawtooth(config: GridConfig) -> Result<(), DaemonError> {
     #[cfg(feature = "integration")]
     let key_state = KeyState::new(&config.key_file_name());
 
+    // This will never happen but needs to be included to make the features work
+    #[cfg(feature = "cylinder-jwt-support")]
+    let gridd_key = load_key("gridd", &[PathBuf::from(config.admin_key_dir())])
+        .map_err(|err| DaemonError::from_source(Box::new(err)))?
+        .ok_or_else(|| DaemonError::with_message("no private key found"))?;
+
+    #[cfg(feature = "cylinder-jwt-support")]
+    let signer = CylinderSigner::new(Secp256k1Context::new().new_signer(gridd_key));
+
     #[cfg(feature = "rest-api")]
     let (rest_api_shutdown_handle, rest_api_join_handle) = rest_api::run(
         config.rest_api_endpoint(),
@@ -115,6 +130,8 @@ pub fn run_sawtooth(config: GridConfig) -> Result<(), DaemonError> {
         #[cfg(feature = "integration")]
         key_state,
         sawtooth_endpoint,
+        #[cfg(feature = "cylinder-jwt-support")]
+        signer,
     )
     .map_err(|err| DaemonError::from_source(Box::new(err)))?;
 

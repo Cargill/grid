@@ -15,6 +15,8 @@
 use std::pin::Pin;
 use std::str::FromStr;
 
+#[cfg(feature = "cylinder-jwt-support")]
+use cylinder::{jwt::JsonWebTokenBuilder, Signer};
 use futures::prelude::*;
 use protobuf::Message;
 use sawtooth_sdk::messages::batch::Batch;
@@ -31,6 +33,14 @@ macro_rules! try_fut {
             Err(err) => return futures::future::err(err).boxed(),
         }
     };
+}
+
+#[cfg(feature = "cylinder-jwt-support")]
+pub fn create_cylinder_jwt_auth(signer: Box<dyn Signer>) -> Result<String, BackendClientError> {
+    let encoded_token = JsonWebTokenBuilder::new().build(&*signer).map_err(|err| {
+        BackendClientError::BadRequestError(format!("failed to build json web token: {}", err))
+    })?;
+    Ok(format!("Bearer Cylinder:{}", encoded_token))
 }
 
 #[derive(Clone)]
@@ -50,12 +60,16 @@ impl BackendClient for SplinterBackendClient {
     fn submit_batches(
         &self,
         msg: SubmitBatches,
+        #[cfg(feature = "cylinder-jwt-support")] signer: Box<dyn Signer>,
     ) -> Pin<Box<dyn Future<Output = Result<BatchStatusLink, BackendClientError>> + Send>> {
         let service_arg = try_fut!(msg.service_id.ok_or_else(|| {
             BackendClientError::BadRequestError("A service id must be provided".into())
         }));
 
         let service_info = try_fut!(SplinterService::from_str(&service_arg));
+
+        #[cfg(feature = "cylinder-jwt-support")]
+        let auth = try_fut!(create_cylinder_jwt_auth(signer));
 
         let url = format!(
             "{}/scabbard/{}/{}/batches",
@@ -77,11 +91,18 @@ impl BackendClient for SplinterBackendClient {
         response_url.set_query(Some(&format!("id={}", batch_query)));
         let link = response_url.to_string();
 
-        let client = reqwest::Client::new();
-        client
-            .post(&url)
+        let mut client = reqwest::Client::new().post(&url);
+
+        client = client
             .header("GridProtocolVersion", "1")
-            .header("Content-Type", "octet-stream")
+            .header("Content-Type", "octet-stream");
+
+        #[cfg(feature = "cylinder-jwt-support")]
+        {
+            client = client.header("Authorization", auth);
+        }
+
+        client
             .body(batch_list_bytes)
             .send()
             .then(|res| {
